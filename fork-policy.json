@@ -1,0 +1,42 @@
+{
+  "forkRole": "debugger+novel",
+  "pluginSurfaceGlobs": [
+    "samples/plugins/**",
+    "sdk/plugin/**"
+  ],
+  "requiredPluginLicenseDirs": [],
+  "dependencyAuditTriggerGlobs": [
+    "deno.json",
+    "deno.lock",
+    "audit/**",
+    "scripts/audit*",
+    "scripts/build*",
+    "scripts/release*",
+    "docs/bridge/**",
+    "debugger/**",
+    "host/**",
+    "bridge/**",
+    "docs/host-app/**",
+    "docs/gui-manual-test.md",
+    "docs/debug-reports.md",
+    "novel/**",
+    "ui/**",
+    "web/**",
+    "**/*.ts"
+  ],
+  "requiredCiTasks": [
+    "test:pr",
+    "test:ci",
+    "gate:boundary",
+    "gate:gui-bridge"
+  ],
+  "forkDestinations": {
+    "samples/plugins/**": "plugin",
+    "sdk/plugin/**": "plugin",
+    "debugger/**": "debugger+novel",
+    "host/**": "debugger+novel",
+    "bridge/**": "debugger+novel",
+    "docs/host-app/**": "debugger+novel",
+    "novel/**": "debugger+novel"
+  }
+}

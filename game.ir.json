@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "0.1.0",
+  "entry": "start",
+  "plugins": [],
+  "labels": {
+    "end_label": [
+      {
+        "op": "say",
+        "text": "Done."
+      },
+      {
+        "op": "end"
+      }
+    ],
+    "opened": [
+      {
+        "op": "say",
+        "text": "Opened."
+      },
+      {
+        "op": "jump",
+        "to": "end_label"
+      },
+      {
+        "op": "end"
+      }
+    ],
+    "start": [
+      {
+        "op": "set",
+        "name": "score",
+        "value": 10
+      },
+      {
+        "op": "set",
+        "name": "name",
+        "value": "alice"
+      },
+      {
+        "op": "if",
+        "name": "hasKey",
+        "negated": false,
+        "to": "opened"
+      },
+      {
+        "op": "jump",
+        "to": "end_label"
+      },
+      {
+        "op": "end"
+      }
+    ]
+  }
+}

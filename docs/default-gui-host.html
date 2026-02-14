@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>f-core Default GUI Host</title>
+  <style>
+    :root {
+      --bg: #f5f7f8;
+      --panel: #ffffff;
+      --ink: #152126;
+      --muted: #4d5d66;
+      --line: #d6dee2;
+      --accent: #005f73;
+      --accent-ink: #ffffff;
+      --choice: #e9f4f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 15% 10%, #ffffff, var(--bg));
+      color: var(--ink);
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+      line-height: 1.45;
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 24px auto;
+      padding: 0 16px;
+      display: grid;
+      gap: 16px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+    }
+    h1, h2 {
+      margin: 0 0 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    h1 { font-size: 1.25rem; }
+    h2 { font-size: 1rem; }
+    .meta {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    .story {
+      min-height: 140px;
+      white-space: pre-wrap;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fbfdfe;
+    }
+    .choices {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .choice-btn {
+      border: 1px solid #a9c7cf;
+      background: var(--choice);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 8px 10px;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+    }
+    .choice-btn:hover { filter: brightness(0.98); }
+    .row {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+    }
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      color: var(--ink);
+      background: #fbfdfe;
+      font: 0.88rem/1.4 "Menlo", "Consolas", "Monaco", monospace;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      cursor: pointer;
+      font: 0.9rem/1.2 "Avenir Next", "Helvetica Neue", sans-serif;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .hint {
+      margin-top: 8px;
+      font-size: 0.86rem;
+      color: var(--muted);
+    }
+    @media (max-width: 760px) {
+      .row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="panel">
+      <h1>f-core Default GUI Host (Local HTML)</h1>
+      <div class="meta" id="status">Waiting for UI events...</div>
+    </section>
+
+    <section class="panel">
+      <h2>Story</h2>
+      <div id="story" class="story"></div>
+      <div id="choices" class="choices"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Bridge Console</h2>
+      <div class="row">
+        <div>
+          <div class="meta">Engine -> UI JSONL (paste for local simulation)</div>
+          <textarea id="inbox" placeholder='{"schemaVersion":1,"event":"ui.say","text":"Hello."}'></textarea>
+          <div class="actions">
+            <button id="applyInbox">Apply lines</button>
+            <button id="clearInbox">Clear</button>
+          </div>
+        </div>
+        <div>
+          <div class="meta">UI -> Engine JSONL (submit to stdin in bridge mode)</div>
+          <textarea id="outbox" readonly></textarea>
+          <div class="actions">
+            <button id="copyOutbox">Copy commands</button>
+            <button id="clearOutbox">Clear</button>
+          </div>
+        </div>
+      </div>
+      <div class="hint">
+        Messaging envelope (optional): postMessage with
+        <code>{ channel: "f-core.ui.event", payload: &lt;ui-event&gt; }</code> and
+        <code>{ channel: "f-core.ui.command", payload: &lt;ui-command&gt; }</code>.
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const statusEl = document.getElementById("status");
+      const storyEl = document.getElementById("story");
+      const choicesEl = document.getElementById("choices");
+      const inboxEl = document.getElementById("inbox");
+      const outboxEl = document.getElementById("outbox");
+      const applyInboxEl = document.getElementById("applyInbox");
+      const clearInboxEl = document.getElementById("clearInbox");
+      const copyOutboxEl = document.getElementById("copyOutbox");
+      const clearOutboxEl = document.getElementById("clearOutbox");
+
+      let pendingRequestId = null;
+      let autoRequestCounter = 1;
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+      }
+
+      function appendStory(text) {
+        if (!storyEl.textContent) {
+          storyEl.textContent = text;
+          return;
+        }
+        storyEl.textContent += "\n" + text;
+      }
+
+      function enqueueCommand(command) {
+        const line = JSON.stringify(command);
+        outboxEl.value += line + "\n";
+        sendToParent(command);
+      }
+
+      function sendToParent(command) {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ channel: "f-core.ui.command", payload: command }, "*");
+        }
+      }
+
+      function normalizeRequestId(raw) {
+        if (typeof raw === "string" && raw.length > 0) return raw;
+        const fallback = "choice-local-" + autoRequestCounter;
+        autoRequestCounter += 1;
+        return fallback;
+      }
+
+      function clearChoices() {
+        choicesEl.innerHTML = "";
+      }
+
+      function renderChoices(event) {
+        clearChoices();
+        const requestId = normalizeRequestId(event.requestId);
+        pendingRequestId = requestId;
+
+        for (let i = 0; i < event.choices.length; i += 1) {
+          const option = event.choices[i];
+          const btn = document.createElement("button");
+          btn.className = "choice-btn";
+          btn.type = "button";
+          btn.textContent = (i + 1) + ". " + option.text;
+          btn.addEventListener("click", () => {
+            const command = {
+              schemaVersion: 1,
+              command: "choice.select",
+              requestId: pendingRequestId || requestId,
+              index: i
+            };
+            enqueueCommand(command);
+            setStatus("choice.select sent (index=" + i + ", requestId=" + command.requestId + ")");
+          });
+          choicesEl.appendChild(btn);
+        }
+      }
+
+      function handleUiEvent(event) {
+        if (!event || typeof event !== "object") return;
+        if (event.schemaVersion !== 1 || typeof event.event !== "string") return;
+
+        if (event.event === "ui.say") {
+          appendStory(String(event.text ?? ""));
+          setStatus("ui.say");
+          return;
+        }
+        if (event.event === "ui.choice.present" && Array.isArray(event.choices)) {
+          renderChoices(event);
+          setStatus("ui.choice.present");
+          return;
+        }
+        if (event.event === "ui.choice.select") {
+          pendingRequestId = null;
+          clearChoices();
+          setStatus("ui.choice.select (engine confirmed)");
+          return;
+        }
+        if (event.event === "ui.presentation.degraded") {
+          setStatus("ui.presentation.degraded");
+        }
+      }
+
+      function handleJsonlLine(line) {
+        if (!line || !line.trim()) return;
+        let parsed;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          setStatus("Invalid JSON line ignored");
+          return;
+        }
+        handleUiEvent(parsed);
+      }
+
+      function applyInboxLines() {
+        const lines = inboxEl.value.split("\n");
+        for (const line of lines) handleJsonlLine(line);
+      }
+
+      function drainOutgoingJsonl() {
+        return outboxEl.value;
+      }
+
+      window.addEventListener("message", (ev) => {
+        const data = ev.data;
+        if (!data || typeof data !== "object") return;
+        if (data.channel === "f-core.ui.event") {
+          handleUiEvent(data.payload);
+        } else if (data.payload && typeof data.payload === "object" && data.payload.event) {
+          handleUiEvent(data.payload);
+        }
+      });
+
+      applyInboxEl.addEventListener("click", applyInboxLines);
+      clearInboxEl.addEventListener("click", () => { inboxEl.value = ""; });
+      clearOutboxEl.addEventListener("click", () => { outboxEl.value = ""; });
+      copyOutboxEl.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(outboxEl.value);
+          setStatus("Copied outgoing JSONL to clipboard");
+        } catch {
+          setStatus("Clipboard unavailable; copy from outbox manually");
+        }
+      });
+
+      window.fcoreDefaultGui = {
+        handleUiEvent,
+        handleJsonlLine,
+        drainOutgoingJsonl
+      };
+    })();
+  </script>
+</body>
+</html>
