@@ -37,7 +37,7 @@ Deno.test("worker runtime: rejects conflicting flow actions", async () => {
   );
 });
 
-Deno.test("worker runtime: rejects integrity mismatch", async () => {
+Deno.test("worker runtime: rejects test-only plugin outside allowlist", async () => {
   const state = { vars: {} };
   await assertRejects(
     () => executeCommand(state, { op: "badhash" }),

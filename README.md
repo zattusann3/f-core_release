@@ -12,8 +12,8 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
 - EN: Public command plugins: `say`, `choice`, `set`.
 - JA: 公開コマンドプラグイン: `say`、`choice`、`set`。
 
-- EN: Internal test operations may exist in source/manifest for security and runtime verification and
-  are not part of the public command contract.
+- EN: Internal test operations may exist in source (and some in manifest for runtime checks) and are
+  not part of the public command contract.
 - JA:
   セキュリティ検証・ランタイム検証のための内部テスト用オペレーションがソース/マニフェストに存在する場合がありますが、公開コマンド契約には含みません。
 
@@ -48,16 +48,28 @@ deno task test
   runtime behavior.
 - JA: 現行テストはWorker分離挙動、式評価安全性、context形状、ランタイム挙動を確認します。
 
+### Manifest Automation / マニフェスト自動化
+
+```bash
+deno task manifest:check
+# update requires signing private key in env
+FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
+```
+
+- EN: `manifest:check` validates manifest hashes and Ed25519 signature.
+- JA: `manifest:check` はマニフェストのハッシュ整合性とEd25519署名を検証します。
+
 ## Runtime Model / 実行モデル
 
 1. EN: The host receives an IR command `{ op, args }`.\
    JA: ホストは IR コマンド `{ op, args }` を受け取ります。
-2. EN: Runtime validates the operation with manifest allowlist and spawns a dedicated Web Worker.\
-   JA: ランタイムはマニフェストallowlistで命令を検証し、専用Web Workerを起動します。
+2. EN: Runtime verifies manifest signature, validates operation allowlist, and spawns a dedicated
+   Web Worker.\
+   JA: ランタイムはマニフェスト署名検証とallowlist検証を行ってから、専用Web Workerを起動します。
 3. EN: Runtime posts `{ op, args, vars, pluginSource }`, and Worker re-validates op and integrity
    before loading.\
-   JA:
-   ランタイムは `{ op, args, vars, pluginSource }` を送信し、Worker側で命令名と整合性を再検証してからロードします。
+   JA: ランタイムは `{ op, args, vars, pluginSource }`
+   を送信し、Worker側で命令名と整合性を再検証してからロードします。
 4. EN: Worker executes plugin with minimal context (`vars`, `jump`, `next`).\
    JA:
    Workerは命令名を検証してプラグインを読み込み、最小context（`vars`、`jump`、`next`）で実行します。
@@ -71,7 +83,8 @@ deno task test
 - EN: See detailed command specs in [`docs/COMMANDS.md`](./docs/COMMANDS.md).
 - JA: コマンドの詳細仕様は [`docs/COMMANDS.md`](./docs/COMMANDS.md) を参照してください。
 
-- EN: Public command contract is allowlisted and documented; test-only operations are not API-stable.
+- EN: Public command contract is allowlisted and documented; test-only operations are not
+  API-stable.
 - JA: 公開コマンド契約はallowlistで管理し文書化します。テスト専用オペレーションはAPI互換対象外です。
 
 ## Security Baseline / セキュリティ基本方針
@@ -85,8 +98,11 @@ deno task test
 - EN: Worker is launched with `deno: { permissions: "none" }`.
 - JA: Workerは `deno: { permissions: "none" }` で起動します。
 
-- EN: Plugin source integrity is verified via SHA-256 manifest before execution.
-- JA: 実行前にSHA-256マニフェストでプラグインソース整合性を検証します。
+- EN: Manifest integrity is verified by Ed25519 signature before execution.
+- JA: 実行前にEd25519署名でマニフェスト自体の整合性を検証します。
+
+- EN: Plugin source integrity is verified via SHA-256 manifest pins before execution.
+- JA: 実行前にSHA-256マニフェスト照合でプラグインソース整合性を検証します。
 
 - EN: Expression evaluation allows only `^`-prefixed safe operators.
 - JA: 式評価は `^` プレフィックスの安全演算子のみ許可します。
@@ -102,6 +118,9 @@ deno task test
 
 - EN: Worker execution is timeout-guarded (default `1000ms`) and terminated on overrun.
 - JA: Worker実行はタイムアウト（デフォルト `1000ms`）で監視され、超過時は強制終了されます。
+
+- EN: Input/output payload sizes are constrained to prevent memory-pressure DoS.
+- JA: メモリ圧迫型DoS対策として、入出力ペイロードサイズを制限しています。
 
 - EN: External-facing errors are sanitized.
 - JA: 外部向けエラーはサニタイズします。

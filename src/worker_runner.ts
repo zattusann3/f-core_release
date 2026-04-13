@@ -1,5 +1,16 @@
 import { createPluginContext, type FlowControl, type RuntimeState } from "./context.ts";
+import { sha256Hex } from "./manifest_crypto.ts";
 import { PLUGIN_MANIFEST } from "./plugin_manifest.ts";
+import {
+  jsonByteLength,
+  MAX_ARGS_BYTES,
+  MAX_JUMP_LABEL_BYTES,
+  MAX_VARS_BYTES,
+  MAX_VARS_ENTRIES,
+  MAX_VARS_PATCH_BYTES,
+  MAX_VARS_PATCH_ENTRIES,
+  textByteLength,
+} from "./runtime_limits.ts";
 import type { PluginModule, VarValue } from "./types.ts";
 import type {
   WorkerExecuteRequest,
@@ -14,20 +25,23 @@ self.onmessage = (event: MessageEvent<WorkerExecuteRequest>) => {
 };
 
 async function run(request: unknown): Promise<void> {
+  const requestId = extractRequestId(request);
   try {
     if (!isExecuteRequest(request)) {
-      postFailure("invalid request");
+      postFailure(requestId, "invalid request");
       return;
     }
 
     if (!OP_NAME_RE.test(request.op)) {
-      postFailure("operation denied");
+      postFailure(request.requestId, "operation denied");
       return;
     }
     if (!hasManifestEntry(request.op)) {
-      postFailure(`integrity violation: ${request.op} not in manifest`);
+      postFailure(request.requestId, "integrity violation");
       return;
     }
+
+    assertInputLimits(request.args, request.vars);
 
     const plugin = await loadPluginInWorker(
       request.op,
@@ -38,17 +52,23 @@ async function run(request: unknown): Promise<void> {
     const context = createPluginContext(state, flow);
 
     await plugin.execute(context, request.args);
+    const varsPatch = computeVarsPatch(request.vars, state.vars);
+    assertOutputLimits(varsPatch, flow.jumpTo);
 
     const response: WorkerExecuteSuccess = {
       ok: true,
-      varsPatch: computeVarsPatch(request.vars, state.vars),
+      requestId: request.requestId,
+      varsPatch,
       jumpTo: flow.jumpTo,
       requestedNext: flow.requestedNext,
     };
     self.postMessage(response);
   } catch (err) {
-    console.error("[Engine Internal] Worker execution failed:", { err });
-    postFailure(errorToReason(err));
+    logInternal("worker.execute.failed", {
+      requestId,
+      error: errorToLog(err),
+    });
+    postFailure(requestId, errorToReason(err));
   }
 }
 
@@ -58,12 +78,12 @@ async function loadPluginInWorker(
 ): Promise<PluginModule> {
   const manifestEntry = PLUGIN_MANIFEST[opName];
   if (!manifestEntry) {
-    throw new Error(`integrity violation: ${opName} not in manifest`);
+    throw new Error("integrity violation");
   }
 
   const actualHash = await sha256Hex(pluginSource);
   if (actualHash !== manifestEntry.sha256) {
-    console.error("[Engine Internal] Plugin integrity violation:", { op: opName });
+    logInternal("worker.plugin.integrity_violation", { op: opName });
     throw new Error("integrity violation");
   }
 
@@ -74,12 +94,6 @@ async function loadPluginInWorker(
     throw new Error("operation unavailable");
   }
   return { execute: loaded.execute as PluginModule["execute"] };
-}
-
-async function sha256Hex(input: string): Promise<string> {
-  const bytes = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function sourceToDataUrl(source: string): string {
@@ -122,9 +136,47 @@ function assertNoRuntimeModuleLoading(source: string): void {
   }
 }
 
+function assertInputLimits(
+  args: Record<string, unknown>,
+  vars: Readonly<Record<string, VarValue>>,
+): void {
+  const varsEntries = Object.keys(vars).length;
+  if (varsEntries > MAX_VARS_ENTRIES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (safeJsonByteLength(args) > MAX_ARGS_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (safeJsonByteLength(vars) > MAX_VARS_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
+}
+
+function assertOutputLimits(varsPatch: Record<string, VarValue>, jumpTo: string | null): void {
+  const patchEntries = Object.keys(varsPatch).length;
+  if (patchEntries > MAX_VARS_PATCH_ENTRIES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (safeJsonByteLength(varsPatch) > MAX_VARS_PATCH_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (jumpTo !== null && textByteLength(jumpTo) > MAX_JUMP_LABEL_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
+}
+
+function safeJsonByteLength(value: unknown): number {
+  try {
+    return jsonByteLength(value);
+  } catch {
+    throw new Error("resource limit exceeded");
+  }
+}
+
 function isExecuteRequest(value: unknown): value is WorkerExecuteRequest {
   if (!isRecord(value)) return false;
   if (value["type"] !== "execute") return false;
+  if (typeof value["requestId"] !== "string") return false;
   if (typeof value["op"] !== "string") return false;
   if (!isRecord(value["args"])) return false;
   if (!isVarMap(value["vars"])) return false;
@@ -157,12 +209,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function postFailure(reason: string): void {
-  const response: WorkerExecuteResponse = { ok: false, reason };
+function postFailure(requestId: string, reason: string): void {
+  const response: WorkerExecuteResponse = { ok: false, requestId, reason };
   self.postMessage(response);
 }
 
 function errorToReason(err: unknown): string {
   if (err instanceof Error && err.message.length > 0) return err.message;
   return "worker error";
+}
+
+function errorToLog(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return { name: err.name, message: err.message };
+  }
+  return { message: String(err) };
+}
+
+function logInternal(event: string, detail: Record<string, unknown>): void {
+  console.error(JSON.stringify({
+    level: "error",
+    scope: "engine-internal",
+    event,
+    ...detail,
+  }));
+}
+
+function extractRequestId(value: unknown): string {
+  if (isRecord(value) && typeof value["requestId"] === "string" && value["requestId"].length > 0) {
+    return value["requestId"];
+  }
+  return "unknown";
 }

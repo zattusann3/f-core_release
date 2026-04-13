@@ -4,12 +4,12 @@ export interface PluginManifestEntry {
 
 export type PluginManifest = Record<string, PluginManifestEntry>;
 
+// Signature over canonical JSON of PLUGIN_MANIFEST
+export const PLUGIN_MANIFEST_SIGNATURE_BASE64 =
+  "wA4kQzqH4fEFz6lk+Ue1iSjdt6DwCSBflToMw/HPVPzzqKSk77VJF7ePoi7sLYRacxLvs6uyvX54CIlKCiaQDg==";
+
 // SHA-256 values are for raw plugin source text under ./src/plugins/*.ts
 export const PLUGIN_MANIFEST: PluginManifest = {
-  badhash: {
-    // intentionally incorrect for integrity rejection tests
-    sha256: "0000000000000000000000000000000000000000000000000000000000000000",
-  },
   choice: {
     sha256: "a034ce56d0be7b5b8e9cd3bb1a1011c39ecfc046ffe726466ad979ee9e8a5499",
   },

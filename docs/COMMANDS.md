@@ -18,12 +18,12 @@ This document summarizes commands currently available in this runtime.
 
 ## Internal/Test Operations (Non-Contract) / 内部・テスト用オペレーション（公開契約外）
 
-| Operation  | Status (EN)                                                                    | 状態 (JA)                                                                 |
-| ---------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| `badhash`  | Listed only for integrity rejection tests and intentionally fails hash check.  | 整合性拒否テスト用で、意図的にハッシュ不一致となる。                      |
-| `conflict` | Listed for flow-conflict tests (`jump` and `next` mixed request rejection).   | フロー競合テスト用（`jump`/`next` 混在要求拒否の確認）。                  |
-| `hang`     | Listed for timeout/termination tests (infinite loop guard).                   | タイムアウト強制終了テスト用（無限ループ防止確認）。                      |
-| `unlisted` | Source file exists but is intentionally not allowlisted and must be rejected. | ソースは存在するが意図的にallowlist未登録で、実行拒否されるべき対象。     |
+| Operation  | Status (EN)                                                                   | 状態 (JA)                                                             |
+| ---------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `badhash`  | Source file exists for negative tests but is intentionally not allowlisted.   | 否定系テスト用にファイルは存在するが、意図的にallowlist未登録。       |
+| `conflict` | Listed for flow-conflict tests (`jump` and `next` mixed request rejection).   | フロー競合テスト用（`jump`/`next` 混在要求拒否の確認）。              |
+| `hang`     | Listed for timeout/termination tests (infinite loop guard).                   | タイムアウト強制終了テスト用（無限ループ防止確認）。                  |
+| `unlisted` | Source file exists but is intentionally not allowlisted and must be rejected. | ソースは存在するが意図的にallowlist未登録で、実行拒否されるべき対象。 |
 
 - EN: Only the public commands (`say`, `choice`, `set`) are part of the runtime command contract.
 - JA: ランタイムの公開コマンド契約に含まれるのは `say`、`choice`、`set` のみです。
@@ -84,3 +84,8 @@ This document summarizes commands currently available in this runtime.
 
 - EN: Before execution, plugin source is integrity-checked (SHA-256 manifest) inside Worker.
 - JA: 実行前にWorker内部でプラグインソースの整合性検証（SHA-256マニフェスト照合）を行います。
+
+- EN: Runtime enforces payload size limits (`args`, `vars`, `varsPatch`, `jumpTo`) before/after
+  worker execution.
+- JA:
+  RuntimeはWorker実行の前後でペイロードサイズ（`args`、`vars`、`varsPatch`、`jumpTo`）を制限します。

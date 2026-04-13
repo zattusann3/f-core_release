@@ -1,5 +1,17 @@
 import type { RuntimeState } from "./context.ts";
-import { PLUGIN_MANIFEST } from "./plugin_manifest.ts";
+import { sha256Hex, verifyManifestSignature } from "./manifest_crypto.ts";
+import { PLUGIN_MANIFEST, PLUGIN_MANIFEST_SIGNATURE_BASE64 } from "./plugin_manifest.ts";
+import { MANIFEST_VERIFY_KEY_RAW_BASE64 } from "./manifest_trust_anchor.ts";
+import {
+  jsonByteLength,
+  MAX_ARGS_BYTES,
+  MAX_JUMP_LABEL_BYTES,
+  MAX_VARS_BYTES,
+  MAX_VARS_ENTRIES,
+  MAX_VARS_PATCH_BYTES,
+  MAX_VARS_PATCH_ENTRIES,
+  textByteLength,
+} from "./runtime_limits.ts";
 import type { PluginArgs, VarValue } from "./types.ts";
 import type {
   WorkerExecuteRequest,
@@ -9,6 +21,8 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 1000;
 const OP_NAME_RE = /^[a-z0-9_]+$/;
+const EXECUTION_MUTEX = createAsyncMutex();
+let manifestIntegrityPromise: Promise<void> | null = null;
 
 export interface CommandIR {
   op: string;
@@ -30,19 +44,30 @@ export async function executeCommand(
   command: CommandIR,
   options: ExecuteOptions = {},
 ): Promise<CommandResult> {
+  const release = await EXECUTION_MUTEX.acquire();
+  const requestId = crypto.randomUUID();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const startedAt = performance.now();
 
   try {
+    await assertManifestIntegrity();
     requireManifestOp(command.op);
+
+    const args = command.args ?? {};
+    assertInputLimits(args, state.vars);
+
     const pluginAsset = await readPluginAsset(command.op);
     const request: WorkerExecuteRequest = {
       type: "execute",
+      requestId,
       op: command.op,
-      args: command.args ?? {},
+      args,
       vars: { ...state.vars },
       pluginSource: pluginAsset.source,
     };
+
     const workerResult = await runInWorker(request, timeoutMs);
+    assertOutputLimits(workerResult);
     applyWorkerResult(state, workerResult);
 
     return {
@@ -51,12 +76,16 @@ export async function executeCommand(
       requestedNext: workerResult.requestedNext,
     };
   } catch (err) {
-    console.error("[Engine Internal] Plugin execution failed:", {
+    logInternal("runtime.execute.failed", {
+      requestId,
       op: command.op,
       timeoutMs,
-      err,
+      durationMs: Math.round(performance.now() - startedAt),
+      error: errorToLog(err),
     });
     throw new Error("operation rejected");
+  } finally {
+    release();
   }
 }
 
@@ -64,6 +93,22 @@ function requireManifestOp(opName: string): void {
   if (!(opName in PLUGIN_MANIFEST)) {
     throw new Error(`integrity violation: ${opName} not in manifest`);
   }
+}
+
+async function assertManifestIntegrity(): Promise<void> {
+  if (!manifestIntegrityPromise) {
+    manifestIntegrityPromise = (async () => {
+      const ok = await verifyManifestSignature(
+        PLUGIN_MANIFEST,
+        PLUGIN_MANIFEST_SIGNATURE_BASE64,
+        MANIFEST_VERIFY_KEY_RAW_BASE64,
+      );
+      if (!ok) {
+        throw new Error("integrity violation");
+      }
+    })();
+  }
+  await manifestIntegrityPromise;
 }
 
 async function runInWorker(
@@ -79,7 +124,7 @@ async function runInWorker(
     const timeoutId = setTimeout(() => {
       cleanup();
       worker.terminate();
-      reject(new Error(`worker timeout after ${timeoutMs}ms`));
+      reject(new Error("worker timeout"));
     }, timeoutMs);
 
     const cleanup = () => {
@@ -96,6 +141,10 @@ async function runInWorker(
       const payload = event.data;
       if (!isWorkerResponse(payload)) {
         reject(new Error("invalid worker response"));
+        return;
+      }
+      if (payload.requestId !== request.requestId) {
+        reject(new Error("request correlation mismatch"));
         return;
       }
       if (!payload.ok) {
@@ -135,15 +184,9 @@ async function readPluginAsset(opName: string): Promise<{ source: string }> {
   const source = await Deno.readTextFile(pluginUrl);
   const hashHex = await sha256Hex(source);
   if (hashHex !== manifestEntry.sha256) {
-    throw new Error(`integrity violation: ${opName} hash mismatch`);
+    throw new Error("integrity violation");
   }
   return { source };
-}
-
-async function sha256Hex(input: string): Promise<string> {
-  const bytes = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function applyWorkerResult(state: RuntimeState, result: WorkerExecuteSuccess): void {
@@ -153,15 +196,49 @@ function applyWorkerResult(state: RuntimeState, result: WorkerExecuteSuccess): v
 
   for (const [name, value] of Object.entries(result.varsPatch)) {
     if (!isValidVarName(name)) {
-      throw new Error(`invalid variable name from worker: ${name}`);
+      throw new Error("invalid variable name");
     }
     if (!isVarValue(value)) {
-      throw new Error(`invalid variable value from worker: ${name}`);
+      throw new Error("invalid variable value");
     }
     if (name.startsWith("_")) {
-      throw new Error(`reserved variable write from worker: ${name}`);
+      throw new Error("reserved variable write");
     }
     state.vars[name] = value;
+  }
+}
+
+function assertInputLimits(args: PluginArgs, vars: Readonly<Record<string, VarValue>>): void {
+  const varsEntries = Object.keys(vars).length;
+  if (varsEntries > MAX_VARS_ENTRIES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (safeJsonByteLength(args) > MAX_ARGS_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (safeJsonByteLength(vars) > MAX_VARS_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
+}
+
+function assertOutputLimits(result: WorkerExecuteSuccess): void {
+  const patchEntries = Object.keys(result.varsPatch).length;
+  if (patchEntries > MAX_VARS_PATCH_ENTRIES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (safeJsonByteLength(result.varsPatch) > MAX_VARS_PATCH_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (result.jumpTo !== null && textByteLength(result.jumpTo) > MAX_JUMP_LABEL_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
+}
+
+function safeJsonByteLength(value: unknown): number {
+  try {
+    return jsonByteLength(value);
+  } catch {
+    throw new Error("resource limit exceeded");
   }
 }
 
@@ -173,6 +250,7 @@ function isWorkerSuccess(value: unknown): value is WorkerExecuteSuccess {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   if ((value as { ok?: unknown }).ok !== true) return false;
   const candidate = value as WorkerExecuteSuccess;
+  if (typeof candidate.requestId !== "string" || candidate.requestId.length === 0) return false;
   if (typeof candidate.requestedNext !== "boolean") return false;
   if (!(candidate.jumpTo === null || typeof candidate.jumpTo === "string")) return false;
   if (!isVarPatch(candidate.varsPatch)) return false;
@@ -198,4 +276,42 @@ function isVarValue(value: unknown): value is VarValue {
 
 function isValidVarName(name: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
+
+function logInternal(event: string, detail: Record<string, unknown>): void {
+  console.error(JSON.stringify({
+    level: "error",
+    scope: "engine-internal",
+    event,
+    ...detail,
+  }));
+}
+
+function errorToLog(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return { name: err.name, message: err.message };
+  }
+  return { message: String(err) };
+}
+
+function createAsyncMutex(): { acquire: () => Promise<() => void> } {
+  let locked = false;
+  const waiters: Array<() => void> = [];
+
+  return {
+    async acquire(): Promise<() => void> {
+      if (locked) {
+        await new Promise<void>((resolve) => waiters.push(resolve));
+      }
+      locked = true;
+      return () => {
+        const next = waiters.shift();
+        if (next) {
+          next();
+        } else {
+          locked = false;
+        }
+      };
+    },
+  };
 }

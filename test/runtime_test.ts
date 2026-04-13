@@ -57,3 +57,27 @@ Deno.test("executeCommand: rejects reserved variable writes from plugin", async 
     "operation rejected",
   );
 });
+
+Deno.test("executeCommand: rejects oversized args payload", async () => {
+  const state = { vars: {} };
+  await assertRejects(
+    () =>
+      executeCommand(state, {
+        op: "say",
+        args: { text: "x".repeat(9 * 1024) },
+      }),
+    Error,
+    "operation rejected",
+  );
+});
+
+Deno.test("executeCommand: rejects oversized vars snapshot", async () => {
+  const state = {
+    vars: Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`k${i}`, i])),
+  };
+  await assertRejects(
+    () => executeCommand(state, { op: "say", args: { text: "ok" } }),
+    Error,
+    "operation rejected",
+  );
+});
