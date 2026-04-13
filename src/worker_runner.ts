@@ -24,11 +24,14 @@ async function run(request: unknown): Promise<void> {
       postFailure("operation denied");
       return;
     }
+    if (!hasManifestEntry(request.op)) {
+      postFailure(`integrity violation: ${request.op} not in manifest`);
+      return;
+    }
 
     const plugin = await loadPluginInWorker(
       request.op,
       request.pluginSource,
-      request.pluginModuleUrl,
     );
     const state: RuntimeState = { vars: { ...request.vars } };
     const flow: FlowControl = { jumpTo: null, requestedNext: false };
@@ -52,11 +55,10 @@ async function run(request: unknown): Promise<void> {
 async function loadPluginInWorker(
   opName: string,
   pluginSource: string,
-  pluginModuleUrl: string,
 ): Promise<PluginModule> {
   const manifestEntry = PLUGIN_MANIFEST[opName];
   if (!manifestEntry) {
-    throw new Error("operation unavailable");
+    throw new Error(`integrity violation: ${opName} not in manifest`);
   }
 
   const actualHash = await sha256Hex(pluginSource);
@@ -65,12 +67,8 @@ async function loadPluginInWorker(
     throw new Error("integrity violation");
   }
 
-  if (!pluginModuleUrl.startsWith("file://")) {
-    throw new Error("operation denied");
-  }
-  assertSafeImportSpecifiers(pluginSource);
-  const rewrittenSource = rewriteRelativeImportsToFileUrls(pluginSource, pluginModuleUrl);
-  const moduleUrl = sourceToDataUrl(rewrittenSource);
+  assertNoRuntimeModuleLoading(pluginSource);
+  const moduleUrl = sourceToDataUrl(pluginSource);
   const loaded = await import(moduleUrl) as Record<string, unknown>;
   if (!loaded || typeof loaded.execute !== "function") {
     throw new Error("operation unavailable");
@@ -112,31 +110,16 @@ function computeVarsPatch(
   return patch;
 }
 
-function assertSafeImportSpecifiers(source: string): void {
-  const importSpecs = [
-    ...source.matchAll(/\bfrom\s+["']([^"']+)["']/g),
-    ...source.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g),
-  ].map((m) => m[1]);
-
-  for (const spec of importSpecs) {
-    if (!spec.startsWith("./") && !spec.startsWith("../")) {
-      throw new Error("operation denied");
-    }
+function assertNoRuntimeModuleLoading(source: string): void {
+  if (/\bimport\s*\(/.test(source)) {
+    throw new Error("operation denied");
   }
-}
-
-function rewriteRelativeImportsToFileUrls(source: string, moduleUrl: string): string {
-  const rewriter = (_full: string, prefix: string, spec: string, suffix: string) => {
-    if (!spec.startsWith("./") && !spec.startsWith("../")) {
-      return `${prefix}${spec}${suffix}`;
-    }
-    const resolved = new URL(spec, moduleUrl).href;
-    return `${prefix}${resolved}${suffix}`;
-  };
-
-  return source
-    .replace(/(from\s+["'])([^"']+)(["'])/g, rewriter)
-    .replace(/(import\(\s*["'])([^"']+)(["']\s*\))/g, rewriter);
+  if (/^\s*import\s+(?!type\b)/m.test(source)) {
+    throw new Error("operation denied");
+  }
+  if (/^\s*export\s+.+\s+from\s+["'][^"']+["']/m.test(source)) {
+    throw new Error("operation denied");
+  }
 }
 
 function isExecuteRequest(value: unknown): value is WorkerExecuteRequest {
@@ -146,8 +129,11 @@ function isExecuteRequest(value: unknown): value is WorkerExecuteRequest {
   if (!isRecord(value["args"])) return false;
   if (!isVarMap(value["vars"])) return false;
   if (typeof value["pluginSource"] !== "string") return false;
-  if (typeof value["pluginModuleUrl"] !== "string") return false;
   return true;
+}
+
+function hasManifestEntry(opName: string): boolean {
+  return opName in PLUGIN_MANIFEST;
 }
 
 function isVarMap(value: unknown): value is Record<string, VarValue> {

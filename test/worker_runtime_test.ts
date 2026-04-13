@@ -19,6 +19,15 @@ Deno.test("worker runtime: rejects missing plugins", async () => {
   );
 });
 
+Deno.test("worker runtime: rejects unlisted plugin even if file exists", async () => {
+  const state = { vars: {} };
+  await assertRejects(
+    () => executeCommand(state, { op: "unlisted" }),
+    Error,
+    "operation rejected",
+  );
+});
+
 Deno.test("worker runtime: rejects conflicting flow actions", async () => {
   const state = { vars: {} };
   await assertRejects(

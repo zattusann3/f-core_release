@@ -6,7 +6,6 @@ export interface WorkerExecuteRequest {
   args: PluginArgs;
   vars: Record<string, VarValue>;
   pluginSource: string;
-  pluginModuleUrl: string;
 }
 
 export interface WorkerExecuteSuccess {

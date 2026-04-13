@@ -33,6 +33,7 @@ export async function executeCommand(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   try {
+    requireManifestOp(command.op);
     const pluginAsset = await readPluginAsset(command.op);
     const request: WorkerExecuteRequest = {
       type: "execute",
@@ -40,7 +41,6 @@ export async function executeCommand(
       args: command.args ?? {},
       vars: { ...state.vars },
       pluginSource: pluginAsset.source,
-      pluginModuleUrl: pluginAsset.moduleUrl,
     };
     const workerResult = await runInWorker(request, timeoutMs);
     applyWorkerResult(state, workerResult);
@@ -57,6 +57,12 @@ export async function executeCommand(
       err,
     });
     throw new Error("operation rejected");
+  }
+}
+
+function requireManifestOp(opName: string): void {
+  if (!(opName in PLUGIN_MANIFEST)) {
+    throw new Error(`integrity violation: ${opName} not in manifest`);
   }
 }
 
@@ -119,21 +125,19 @@ async function runInWorker(
   });
 }
 
-async function readPluginAsset(opName: string): Promise<{ source: string; moduleUrl: string }> {
+async function readPluginAsset(opName: string): Promise<{ source: string }> {
   if (!OP_NAME_RE.test(opName)) {
     throw new Error("operation denied");
   }
+  requireManifestOp(opName);
   const manifestEntry = PLUGIN_MANIFEST[opName];
-  if (!manifestEntry) {
-    throw new Error(`integrity violation: ${opName} not in manifest`);
-  }
-  const moduleUrl = new URL(`./plugins/${opName}.ts`, import.meta.url);
-  const source = await Deno.readTextFile(moduleUrl);
+  const pluginUrl = new URL(`./plugins/${opName}.ts`, import.meta.url);
+  const source = await Deno.readTextFile(pluginUrl);
   const hashHex = await sha256Hex(source);
   if (hashHex !== manifestEntry.sha256) {
     throw new Error(`integrity violation: ${opName} hash mismatch`);
   }
-  return { source, moduleUrl: moduleUrl.href };
+  return { source };
 }
 
 async function sha256Hex(input: string): Promise<string> {
