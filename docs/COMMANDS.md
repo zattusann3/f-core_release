@@ -8,13 +8,25 @@ This document summarizes commands currently available in this runtime.
 - EN: Commands are executed via IR as `{ op: "<command>", args: { ... } }`.
 - JA: コマンドはIR `{ op: "<command>", args: { ... } }` 形式で実行されます。
 
-## Commands / コマンド一覧
+## Public Commands / 公開コマンド一覧
 
 | Command  | Required Args                          | Behavior (EN)                                                                          | 機能 (JA)                                                                |
 | -------- | -------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `say`    | `text: string`                         | Stores the line into variable `last_say` and requests normal progression (`next`).     | 発話テキストを変数 `last_say` に保存し、通常進行（`next`）を要求します。 |
 | `choice` | `to: string`                           | Requests a jump to the specified label (`jump(to)`).                                   | 指定ラベルへ分岐する進行要求（`jump(to)`）を行います。                   |
 | `set`    | `target: string`, `expression: string` | Evaluates a safe expression and writes the result into `target`, then requests `next`. | 安全式を評価して `target` 変数へ代入し、その後 `next` を要求します。     |
+
+## Internal/Test Operations (Non-Contract) / 内部・テスト用オペレーション（公開契約外）
+
+| Operation  | Status (EN)                                                                    | 状態 (JA)                                                                 |
+| ---------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `badhash`  | Listed only for integrity rejection tests and intentionally fails hash check.  | 整合性拒否テスト用で、意図的にハッシュ不一致となる。                      |
+| `conflict` | Listed for flow-conflict tests (`jump` and `next` mixed request rejection).   | フロー競合テスト用（`jump`/`next` 混在要求拒否の確認）。                  |
+| `hang`     | Listed for timeout/termination tests (infinite loop guard).                   | タイムアウト強制終了テスト用（無限ループ防止確認）。                      |
+| `unlisted` | Source file exists but is intentionally not allowlisted and must be rejected. | ソースは存在するが意図的にallowlist未登録で、実行拒否されるべき対象。     |
+
+- EN: Only the public commands (`say`, `choice`, `set`) are part of the runtime command contract.
+- JA: ランタイムの公開コマンド契約に含まれるのは `say`、`choice`、`set` のみです。
 
 ## `set` Expression Rules / `set` の式ルール
 

@@ -9,8 +9,13 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
   deterministic behavior.
 - JA: このリポジトリは、セキュリティ境界と決定的挙動を優先した初期実装段階です。
 
-- EN: Implemented command plugins: `say`, `choice`, `set`.
-- JA: 実装済みコマンドプラグイン: `say`、`choice`、`set`。
+- EN: Public command plugins: `say`, `choice`, `set`.
+- JA: 公開コマンドプラグイン: `say`、`choice`、`set`。
+
+- EN: Internal test operations may exist in source/manifest for security and runtime verification and
+  are not part of the public command contract.
+- JA:
+  セキュリティ検証・ランタイム検証のための内部テスト用オペレーションがソース/マニフェストに存在する場合がありますが、公開コマンド契約には含みません。
 
 ## Design Goals / 設計目標
 
@@ -47,12 +52,12 @@ deno task test
 
 1. EN: The host receives an IR command `{ op, args }`.\
    JA: ホストは IR コマンド `{ op, args }` を受け取ります。
-2. EN: Runtime spawns a dedicated Web Worker and posts `{ op, args, vars }`.\
-   JA: ランタイムは専用Web Workerを起動し、`{ op, args, vars }` を送信します。
-3. EN: Runtime reads plugin source and sends it to Worker, then Worker validates op name and
-   integrity before loading.\
+2. EN: Runtime validates the operation with manifest allowlist and spawns a dedicated Web Worker.\
+   JA: ランタイムはマニフェストallowlistで命令を検証し、専用Web Workerを起動します。
+3. EN: Runtime posts `{ op, args, vars, pluginSource }`, and Worker re-validates op and integrity
+   before loading.\
    JA:
-   ランタイムはプラグインソースを読み取ってWorkerへ渡し、Worker側で命令名と整合性を検証してからロードします。
+   ランタイムは `{ op, args, vars, pluginSource }` を送信し、Worker側で命令名と整合性を再検証してからロードします。
 4. EN: Worker executes plugin with minimal context (`vars`, `jump`, `next`).\
    JA:
    Workerは命令名を検証してプラグインを読み込み、最小context（`vars`、`jump`、`next`）で実行します。
@@ -65,6 +70,9 @@ deno task test
 
 - EN: See detailed command specs in [`docs/COMMANDS.md`](./docs/COMMANDS.md).
 - JA: コマンドの詳細仕様は [`docs/COMMANDS.md`](./docs/COMMANDS.md) を参照してください。
+
+- EN: Public command contract is allowlisted and documented; test-only operations are not API-stable.
+- JA: 公開コマンド契約はallowlistで管理し文書化します。テスト専用オペレーションはAPI互換対象外です。
 
 ## Security Baseline / セキュリティ基本方針
 
