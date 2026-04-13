@@ -6,6 +6,6 @@ export function execute(context: PluginContext, args: PluginArgs): void {
     throw new Error("say.text must be a string");
   }
 
-  context.vars.set("_last_say", text);
+  context.vars.set("last_say", text);
   context.next();
 }

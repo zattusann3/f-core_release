@@ -24,3 +24,8 @@ Deno.test("evaluateExpression: supports safe comparisons", () => {
   assertEquals(evaluateExpression("flag ^= 1", vars), true);
   assertEquals(evaluateExpression("hp ^> 5", vars), true);
 });
+
+Deno.test("evaluateExpression: supports quoted string literals", () => {
+  assertEquals(evaluateExpression('"こんにちは" ^+ "世界"', {}), "こんにちは世界");
+  assertEquals(evaluateExpression("'a b' ^+ ' c'", {}), "a b c");
+});

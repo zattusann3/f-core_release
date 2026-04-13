@@ -24,10 +24,35 @@ Deno.test("executeCommand: runs choice plugin", async () => {
   assertEquals(result.requestedNext, false);
 });
 
+Deno.test("executeCommand: runs say plugin", async () => {
+  const state = { vars: {} };
+  const result = await executeCommand(state, {
+    op: "say",
+    args: { text: "hello" },
+  });
+
+  assertEquals(result.vars.last_say, "hello");
+  assertEquals(result.requestedNext, true);
+  assertEquals(result.jumpTo, null);
+});
+
 Deno.test("executeCommand: sanitizes plugin execution errors", async () => {
   const state = { vars: {} };
   await assertRejects(
     () => executeCommand(state, { op: "set", args: { target: "x" } }),
+    Error,
+    "operation rejected",
+  );
+});
+
+Deno.test("executeCommand: rejects reserved variable writes from plugin", async () => {
+  const state = { vars: { hp: 10 } };
+  await assertRejects(
+    () =>
+      executeCommand(state, {
+        op: "set",
+        args: { target: "_current_label", expression: "hp ^+ 1" },
+      }),
     Error,
     "operation rejected",
   );

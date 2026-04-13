@@ -1,11 +1,12 @@
 # f-core20260403
 
-Minimal secure runtime prototype for command plugins in Deno/TypeScript.  
+Minimal secure runtime prototype for command plugins in Deno/TypeScript.\
 Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュアランタイムのプロトタイプです。
 
 ## Status / 現状
 
-- EN: This repository is an early-stage implementation focused on security boundaries and deterministic behavior.
+- EN: This repository is an early-stage implementation focused on security boundaries and
+  deterministic behavior.
 - JA: このリポジトリは、セキュリティ境界と決定的挙動を優先した初期実装段階です。
 
 - EN: Implemented command plugins: `say`, `choice`, `set`.
@@ -38,19 +39,27 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
 deno task test
 ```
 
-- EN: Current test suite validates loader checks, expression safety, context shape, and runtime behavior.
-- JA: 現行テストはローダー検証、式評価安全性、context形状、ランタイム挙動を確認します。
+- EN: Current test suite validates worker isolation behavior, expression safety, context shape, and
+  runtime behavior.
+- JA: 現行テストはWorker分離挙動、式評価安全性、context形状、ランタイム挙動を確認します。
 
 ## Runtime Model / 実行モデル
 
-1. EN: The host receives an IR command `{ op, args }`.  
+1. EN: The host receives an IR command `{ op, args }`.\
    JA: ホストは IR コマンド `{ op, args }` を受け取ります。
-2. EN: `loadPlugin(op)` loads `./plugins/<op>.ts` after strict name validation.  
-   JA: `loadPlugin(op)` は厳格な名前検証後に `./plugins/<op>.ts` を読み込みます。
-3. EN: Plugin executes with a minimal context (`vars`, `jump`, `next`).  
-   JA: プラグインは最小context（`vars`、`jump`、`next`）で実行されます。
-4. EN: Result is returned as updated vars and flow control flags.  
-   JA: 更新後の変数と進行制御フラグが結果として返ります。
+2. EN: Runtime spawns a dedicated Web Worker and posts `{ op, args, vars }`.\
+   JA: ランタイムは専用Web Workerを起動し、`{ op, args, vars }` を送信します。
+3. EN: Runtime reads plugin source and sends it to Worker, then Worker validates op name and
+   integrity before loading.\
+   JA:
+   ランタイムはプラグインソースを読み取ってWorkerへ渡し、Worker側で命令名と整合性を検証してからロードします。
+4. EN: Worker executes plugin with minimal context (`vars`, `jump`, `next`).\
+   JA:
+   Workerは命令名を検証してプラグインを読み込み、最小context（`vars`、`jump`、`next`）で実行します。
+5. EN: Worker returns serializable result (`varsPatch`, `jumpTo`, `requestedNext`) and main thread
+   applies it.\
+   JA: Workerはシリアライズ可能な結果（`varsPatch`, `jumpTo`,
+   `requestedNext`）を返し、メインスレッドが適用します。
 
 ## Available Commands / 利用可能コマンド
 
@@ -65,11 +74,26 @@ deno task test
 - EN: Plugin module path is fixed to `./plugins/${opName}.ts` relative to `import.meta.url`.
 - JA: プラグインパスは `import.meta.url` 基準の `./plugins/${opName}.ts` に固定します。
 
+- EN: Worker is launched with `deno: { permissions: "none" }`.
+- JA: Workerは `deno: { permissions: "none" }` で起動します。
+
+- EN: Plugin source integrity is verified via SHA-256 manifest before execution.
+- JA: 実行前にSHA-256マニフェストでプラグインソース整合性を検証します。
+
 - EN: Expression evaluation allows only `^`-prefixed safe operators.
 - JA: 式評価は `^` プレフィックスの安全演算子のみ許可します。
 
+- EN: Variables with `_` prefix are reserved and blocked from plugin writes.
+- JA: `_` プレフィックス変数は予約領域とし、プラグイン書き込みを禁止します。
+
+- EN: `jump` and `next` are mutually exclusive per plugin execution.
+- JA: 1回のプラグイン実行で `jump` と `next` は排他制御されます。
+
 - EN: Division by zero in `^/` is explicitly rejected.
 - JA: `^/` のゼロ除算は明示的に拒否します。
+
+- EN: Worker execution is timeout-guarded (default `1000ms`) and terminated on overrun.
+- JA: Worker実行はタイムアウト（デフォルト `1000ms`）で監視され、超過時は強制終了されます。
 
 - EN: External-facing errors are sanitized.
 - JA: 外部向けエラーはサニタイズします。
