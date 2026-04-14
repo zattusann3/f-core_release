@@ -6,18 +6,17 @@ import {
   jsonByteLength,
   MAX_ARGS_BYTES,
   MAX_JUMP_LABEL_BYTES,
+  MAX_RENDER_COMMANDS_BYTES,
+  MAX_RENDER_COMMANDS_ENTRIES,
   MAX_VARS_BYTES,
   MAX_VARS_ENTRIES,
   MAX_VARS_PATCH_BYTES,
   MAX_VARS_PATCH_ENTRIES,
   textByteLength,
 } from "./runtime_limits.ts";
-import type { PluginArgs, VarValue } from "./types.ts";
-import type {
-  WorkerExecuteRequest,
-  WorkerExecuteResponse,
-  WorkerExecuteSuccess,
-} from "./worker_protocol.ts";
+import type { PluginArgs, RenderCommand, VarValue } from "./types.ts";
+import type { WorkerExecuteRequest, WorkerExecuteSuccess } from "./worker_protocol.ts";
+import { WorkerHost } from "./worker_host.ts";
 
 const DEFAULT_TIMEOUT_MS = 1000;
 const OP_NAME_RE = /^[a-z0-9_]+$/;
@@ -33,6 +32,8 @@ export interface CommandResult {
   vars: Readonly<Record<string, VarValue>>;
   jumpTo: string | null;
   requestedNext: boolean;
+  suspended: boolean;
+  renderCommands: ReadonlyArray<RenderCommand>;
 }
 
 export interface ExecuteOptions {
@@ -42,6 +43,7 @@ export interface ExecuteOptions {
 export async function executeCommand(
   state: RuntimeState,
   command: CommandIR,
+  workerHost: WorkerHost,
   options: ExecuteOptions = {},
 ): Promise<CommandResult> {
   const release = await EXECUTION_MUTEX.acquire();
@@ -66,7 +68,7 @@ export async function executeCommand(
       pluginSource: pluginAsset.source,
     };
 
-    const workerResult = await runInWorker(request, timeoutMs);
+    const workerResult = await workerHost.execute(request, timeoutMs);
     assertOutputLimits(workerResult);
     applyWorkerResult(state, workerResult);
 
@@ -74,6 +76,8 @@ export async function executeCommand(
       vars: Object.freeze({ ...state.vars }),
       jumpTo: workerResult.jumpTo,
       requestedNext: workerResult.requestedNext,
+      suspended: workerResult.suspended,
+      renderCommands: Object.freeze([...workerResult.renderCommands]),
     };
   } catch (err) {
     logInternal("runtime.execute.failed", {
@@ -111,69 +115,6 @@ async function assertManifestIntegrity(): Promise<void> {
   await manifestIntegrityPromise;
 }
 
-async function runInWorker(
-  request: WorkerExecuteRequest,
-  timeoutMs: number,
-): Promise<WorkerExecuteSuccess> {
-  const worker = new Worker(new URL("./worker_runner.ts", import.meta.url).href, {
-    type: "module",
-    deno: { permissions: "none" },
-  });
-
-  return await new Promise<WorkerExecuteSuccess>((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      cleanup();
-      worker.terminate();
-      reject(new Error("worker timeout"));
-    }, timeoutMs);
-
-    const cleanup = () => {
-      clearTimeout(timeoutId);
-      worker.onmessage = null;
-      worker.onerror = null;
-      worker.onmessageerror = null;
-    };
-
-    worker.onmessage = (event: MessageEvent<WorkerExecuteResponse>) => {
-      cleanup();
-      worker.terminate();
-
-      const payload = event.data;
-      if (!isWorkerResponse(payload)) {
-        reject(new Error("invalid worker response"));
-        return;
-      }
-      if (payload.requestId !== request.requestId) {
-        reject(new Error("request correlation mismatch"));
-        return;
-      }
-      if (!payload.ok) {
-        reject(new Error(payload.reason || "worker rejected"));
-        return;
-      }
-      if (!isWorkerSuccess(payload)) {
-        reject(new Error("invalid worker success payload"));
-        return;
-      }
-      resolve(payload);
-    };
-
-    worker.onerror = (event) => {
-      cleanup();
-      worker.terminate();
-      reject(new Error(event.message || "worker error"));
-    };
-
-    worker.onmessageerror = () => {
-      cleanup();
-      worker.terminate();
-      reject(new Error("worker message error"));
-    };
-
-    worker.postMessage(request);
-  });
-}
-
 async function readPluginAsset(opName: string): Promise<{ source: string }> {
   if (!OP_NAME_RE.test(opName)) {
     throw new Error("operation denied");
@@ -190,7 +131,9 @@ async function readPluginAsset(opName: string): Promise<{ source: string }> {
 }
 
 function applyWorkerResult(state: RuntimeState, result: WorkerExecuteSuccess): void {
-  if (result.jumpTo !== null && result.requestedNext) {
+  const flowActions = Number(result.jumpTo !== null) + Number(result.requestedNext) +
+    Number(result.suspended);
+  if (flowActions > 1) {
     throw new Error("conflicting flow result");
   }
 
@@ -232,6 +175,12 @@ function assertOutputLimits(result: WorkerExecuteSuccess): void {
   if (result.jumpTo !== null && textByteLength(result.jumpTo) > MAX_JUMP_LABEL_BYTES) {
     throw new Error("resource limit exceeded");
   }
+  if (result.renderCommands.length > MAX_RENDER_COMMANDS_ENTRIES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (safeJsonByteLength(result.renderCommands) > MAX_RENDER_COMMANDS_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
 }
 
 function safeJsonByteLength(value: unknown): number {
@@ -240,21 +189,6 @@ function safeJsonByteLength(value: unknown): number {
   } catch {
     throw new Error("resource limit exceeded");
   }
-}
-
-function isWorkerResponse(value: unknown): value is WorkerExecuteResponse {
-  return typeof value === "object" && value !== null && "ok" in value;
-}
-
-function isWorkerSuccess(value: unknown): value is WorkerExecuteSuccess {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  if ((value as { ok?: unknown }).ok !== true) return false;
-  const candidate = value as WorkerExecuteSuccess;
-  if (typeof candidate.requestId !== "string" || candidate.requestId.length === 0) return false;
-  if (typeof candidate.requestedNext !== "boolean") return false;
-  if (!(candidate.jumpTo === null || typeof candidate.jumpTo === "string")) return false;
-  if (!isVarPatch(candidate.varsPatch)) return false;
-  return true;
 }
 
 function isVarPatch(value: unknown): value is Record<string, VarValue> {

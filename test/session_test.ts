@@ -1,0 +1,169 @@
+import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert";
+import { ScenarioSession } from "../src/session.ts";
+import type { CommandIR } from "../src/runtime.ts";
+
+Deno.test("ScenarioSession: step advances index and handles jump", async () => {
+  const scenario: Record<string, CommandIR[]> = {
+    start: [
+      { op: "say", args: { text: "line 1" } },
+      { op: "choice", args: { to: "end" } },
+    ],
+    end: [
+      { op: "say", args: { text: "line 2" } },
+    ],
+  };
+
+  const session = new ScenarioSession();
+  try {
+    session.loadScenario(scenario, "start");
+
+    const firstRender = await session.step();
+    assertEquals(firstRender?.length, 1);
+    assertEquals(session.currentLabel, "start");
+    assertEquals(session.currentIndex, 1);
+
+    const secondRender = await session.step();
+    assertEquals(secondRender, []);
+    assertEquals(session.currentLabel, "end");
+    assertEquals(session.currentIndex, 0);
+
+    const thirdRender = await session.step();
+    assertEquals(thirdRender?.length, 1);
+    assertEquals(session.currentLabel, "end");
+    assertEquals(session.currentIndex, 1);
+
+    const done = await session.step();
+    assertEquals(done, null);
+  } finally {
+    session.close();
+  }
+});
+
+Deno.test("ScenarioSession: save and load restore cursor and vars", async () => {
+  const scenario: Record<string, CommandIR[]> = {
+    start: [
+      { op: "set", args: { target: "hp", expression: "3 ^+ 4" } },
+      { op: "choice", args: { to: "end" } },
+    ],
+    end: [
+      { op: "say", args: { text: "done" } },
+    ],
+  };
+
+  const source = new ScenarioSession();
+  let restored: ScenarioSession | null = null;
+  try {
+    source.loadScenario(scenario, "start");
+    await source.step();
+    await source.step();
+    const saveData = source.exportSaveData();
+
+    restored = new ScenarioSession();
+    restored.loadScenario(scenario, "start");
+    restored.importSaveData(saveData);
+
+    assertEquals(restored.currentLabel, "end");
+    assertEquals(restored.currentIndex, 0);
+    assertEquals(restored.runtimeState.vars.hp, 7);
+    assertEquals(restored.runtimeState.vars._last_input, null);
+
+    const render = await restored.step();
+    assertEquals(render?.length, 1);
+    assertEquals(restored.currentIndex, 1);
+  } finally {
+    source.close();
+    restored?.close();
+  }
+});
+
+Deno.test("ScenarioSession: suspend keeps PC, input resumes with jump", async () => {
+  const scenario: Record<string, CommandIR[]> = {
+    start: [
+      {
+        op: "menu",
+        args: {
+          choices: [
+            { text: "To End", to: "end" },
+          ],
+        },
+      },
+      { op: "say", args: { text: "unreachable" } },
+    ],
+    end: [
+      { op: "say", args: { text: "done" } },
+    ],
+  };
+
+  const session = new ScenarioSession();
+  try {
+    session.loadScenario(scenario, "start");
+
+    const first = await session.step();
+    assertEquals(first?.length, 2);
+    assertEquals(session.currentLabel, "start");
+    assertEquals(session.currentIndex, 0);
+    assertEquals(session.runtimeState.vars._last_input, null);
+
+    session.provideInput("end");
+    assertEquals(session.runtimeState.vars._last_input, "end");
+
+    const second = await session.step();
+    assertEquals(second, []);
+    assertEquals(session.currentLabel, "end");
+    assertEquals(session.currentIndex, 0);
+    assertEquals(session.runtimeState.vars._last_input, null);
+  } finally {
+    session.close();
+  }
+});
+
+Deno.test("ScenarioSession: importSaveData rejects invalid payloads", () => {
+  const scenario: Record<string, CommandIR[]> = {
+    start: [{ op: "say", args: { text: "x" } }],
+  };
+
+  const session = new ScenarioSession();
+  try {
+    session.loadScenario(scenario, "start");
+
+    assertThrows(
+      () =>
+        session.importSaveData(
+          JSON.stringify({ currentLabel: "missing", currentIndex: 0, vars: {} }),
+        ),
+      Error,
+      "invalid save data",
+    );
+    assertThrows(
+      () =>
+        session.importSaveData(
+          JSON.stringify({ currentLabel: "start", currentIndex: 99, vars: {} }),
+        ),
+      Error,
+      "invalid save data",
+    );
+    assertThrows(
+      () =>
+        session.importSaveData(
+          JSON.stringify({ currentLabel: "start", currentIndex: 0, vars: { _hack: 1 } }),
+        ),
+      Error,
+      "invalid save data",
+    );
+  } finally {
+    session.close();
+  }
+});
+
+Deno.test("ScenarioSession: step rejects before scenario start", async () => {
+  const session = new ScenarioSession();
+  try {
+    await assertRejects(
+      () => session.step(),
+      Error,
+      "session not started",
+    );
+  } finally {
+    session.close();
+  }
+});

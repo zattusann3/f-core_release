@@ -1,4 +1,4 @@
-import type { PluginArgs, VarValue } from "./types.ts";
+import type { PluginArgs, RenderCommand, VarValue } from "./types.ts";
 
 export interface WorkerExecuteRequest {
   type: "execute";
@@ -15,6 +15,8 @@ export interface WorkerExecuteSuccess {
   varsPatch: Record<string, VarValue>;
   jumpTo: string | null;
   requestedNext: boolean;
+  suspended: boolean;
+  renderCommands: RenderCommand[];
 }
 
 export interface WorkerExecuteFailure {

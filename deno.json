@@ -1,5 +1,6 @@
 {
   "tasks": {
+    "demo:serve": "deno run --allow-net --allow-read --unstable-worker-options scripts/demo_server.ts",
     "manifest:keygen": "deno run scripts/manifest_keygen.ts",
     "manifest:update": "deno run --allow-read --allow-write --allow-env scripts/manifest_update.ts",
     "manifest:check": "deno run --allow-read scripts/manifest_check.ts",

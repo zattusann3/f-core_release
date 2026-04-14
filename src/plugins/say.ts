@@ -6,6 +6,17 @@ export function execute(context: PluginContext, args: PluginArgs): void {
     throw new Error("say.text must be a string");
   }
 
+  const previousSeq = context.vars.get("say_seq");
+  const nextSeq = typeof previousSeq === "number" ? previousSeq + 1 : 1;
+
   context.vars.set("last_say", text);
+  context.vars.set("say_seq", nextSeq);
+  context.ui.dispatch({
+    type: "AppendNode",
+    parentId: "fc-text-layer",
+    nodeId: `fc-say-${nextSeq}`,
+    tag: "span",
+    text,
+  });
   context.next();
 }

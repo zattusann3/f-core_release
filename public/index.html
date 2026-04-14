@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>f-core Inspector</title>
+    <style>
+      :root {
+        --panel-bg: #0f1220;
+        --panel-border: #2a3152;
+        --panel-text: #e7ebff;
+        --accent: #63d6ff;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        background: #060912;
+        color: var(--panel-text);
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        height: 100vh;
+        padding: 12px;
+        box-sizing: border-box;
+      }
+      .panel {
+        border: 1px solid var(--panel-border);
+        border-radius: 10px;
+        background: var(--panel-bg);
+        padding: 12px;
+        box-sizing: border-box;
+        overflow: auto;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 12px;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .controls + .controls {
+        margin-top: 8px;
+      }
+      button {
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--panel-text);
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      input {
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        background: #090d1a;
+        color: var(--panel-text);
+        padding: 6px 10px;
+      }
+      textarea {
+        width: 100%;
+        min-height: 140px;
+        margin-top: 8px;
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        background: #090d1a;
+        color: var(--panel-text);
+        padding: 8px;
+        box-sizing: border-box;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      pre {
+        margin-top: 12px;
+        padding: 12px;
+        background: #090d1a;
+        border-radius: 8px;
+        border: 1px solid var(--panel-border);
+        overflow: auto;
+      }
+      iframe {
+        width: 100%;
+        height: calc(100% - 28px);
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        background: white;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <section class="panel">
+        <h1>Inspector (司令室)</h1>
+        <div class="controls">
+          <button id="session-start">Session開始</button>
+          <button id="session-step">次へ (Step)</button>
+          <button id="session-save">Save取得</button>
+          <button id="session-load">Save読込</button>
+        </div>
+        <textarea
+          id="save-data"
+          placeholder='{"currentLabel":"start","currentIndex":0,"vars":{}}'
+        ></textarea>
+        <pre id="json-viewer">{}</pre>
+      </section>
+      <section class="panel">
+        <h1>Renderer (映写機)</h1>
+        <iframe id="renderer-frame" src="/renderer.html"></iframe>
+      </section>
+    </div>
+    <script type="module" src="/inspector.js"></script>
+  </body>
+</html>

@@ -5,6 +5,8 @@ import {
   jsonByteLength,
   MAX_ARGS_BYTES,
   MAX_JUMP_LABEL_BYTES,
+  MAX_RENDER_COMMANDS_BYTES,
+  MAX_RENDER_COMMANDS_ENTRIES,
   MAX_VARS_BYTES,
   MAX_VARS_ENTRIES,
   MAX_VARS_PATCH_BYTES,
@@ -47,13 +49,15 @@ async function run(request: unknown): Promise<void> {
       request.op,
       request.pluginSource,
     );
-    const state: RuntimeState = { vars: { ...request.vars } };
-    const flow: FlowControl = { jumpTo: null, requestedNext: false };
+    const state: RuntimeState = { vars: { ...request.vars }, renderCommands: [] };
+    const renderCommands = state.renderCommands ?? [];
+    state.renderCommands = renderCommands;
+    const flow: FlowControl = { jumpTo: null, requestedNext: false, suspended: false };
     const context = createPluginContext(state, flow);
 
     await plugin.execute(context, request.args);
     const varsPatch = computeVarsPatch(request.vars, state.vars);
-    assertOutputLimits(varsPatch, flow.jumpTo);
+    assertOutputLimits(varsPatch, flow.jumpTo, renderCommands);
 
     const response: WorkerExecuteSuccess = {
       ok: true,
@@ -61,6 +65,8 @@ async function run(request: unknown): Promise<void> {
       varsPatch,
       jumpTo: flow.jumpTo,
       requestedNext: flow.requestedNext,
+      suspended: flow.suspended,
+      renderCommands,
     };
     self.postMessage(response);
   } catch (err) {
@@ -152,7 +158,11 @@ function assertInputLimits(
   }
 }
 
-function assertOutputLimits(varsPatch: Record<string, VarValue>, jumpTo: string | null): void {
+function assertOutputLimits(
+  varsPatch: Record<string, VarValue>,
+  jumpTo: string | null,
+  renderCommands: unknown[],
+): void {
   const patchEntries = Object.keys(varsPatch).length;
   if (patchEntries > MAX_VARS_PATCH_ENTRIES) {
     throw new Error("resource limit exceeded");
@@ -161,6 +171,12 @@ function assertOutputLimits(varsPatch: Record<string, VarValue>, jumpTo: string 
     throw new Error("resource limit exceeded");
   }
   if (jumpTo !== null && textByteLength(jumpTo) > MAX_JUMP_LABEL_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (renderCommands.length > MAX_RENDER_COMMANDS_ENTRIES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (safeJsonByteLength(renderCommands) > MAX_RENDER_COMMANDS_BYTES) {
     throw new Error("resource limit exceeded");
   }
 }
