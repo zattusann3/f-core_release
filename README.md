@@ -9,8 +9,8 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
   deterministic behavior.
 - JA: このリポジトリは、セキュリティ境界と決定的挙動を優先した初期実装段階です。
 
-- EN: Public command plugins: `say`, `choice`, `set`.
-- JA: 公開コマンドプラグイン: `say`、`choice`、`set`。
+- EN: Public command plugins: `say`, `choice`, `set`, `asset`, `effect`, `menu`.
+- JA: 公開コマンドプラグイン: `say`、`choice`、`set`、`asset`、`effect`、`menu`。
 
 - EN: Internal test operations may exist in source (and some in manifest for runtime checks) and are
   not part of the public command contract.
@@ -48,6 +48,20 @@ deno task test
   runtime behavior.
 - JA: 現行テストはWorker分離挙動、式評価安全性、context形状、ランタイム挙動を確認します。
 
+### Run Demo Host / デモホスト起動
+
+```bash
+mkdir -p assets
+# 任意の画像を assets/sample.jpg として配置
+deno task demo:serve
+```
+
+- EN: Open `http://127.0.0.1:8000/` in your browser.
+- JA: ブラウザで `http://127.0.0.1:8000/` を開いてください。
+
+- EN: `sample.jpg` is referenced by the built-in demo scenario in `scripts/demo_server.ts`.
+- JA: `scripts/demo_server.ts` の内蔵デモシナリオは `sample.jpg` を参照します。
+
 ### Manifest Automation / マニフェスト自動化
 
 ```bash
@@ -63,20 +77,20 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
 
 1. EN: The host receives an IR command `{ op, args }`.\
    JA: ホストは IR コマンド `{ op, args }` を受け取ります。
-2. EN: Runtime verifies manifest signature, validates operation allowlist, and spawns a dedicated
-   Web Worker.\
-   JA: ランタイムはマニフェスト署名検証とallowlist検証を行ってから、専用Web Workerを起動します。
+2. EN: Runtime verifies manifest signature and allowlist, then sends execution to a resident Worker
+   host.\
+   JA: ランタイムはマニフェスト署名検証とallowlist検証を行い、常駐Workerホストへ実行を委譲します。
 3. EN: Runtime posts `{ op, args, vars, pluginSource }`, and Worker re-validates op and integrity
    before loading.\
    JA: ランタイムは `{ op, args, vars, pluginSource }`
    を送信し、Worker側で命令名と整合性を再検証してからロードします。
-4. EN: Worker executes plugin with minimal context (`vars`, `jump`, `next`).\
+4. EN: Worker executes plugin with minimal context (`vars`, `jump`, `next`, `suspend`, `ui.dispatch`).\
    JA:
-   Workerは命令名を検証してプラグインを読み込み、最小context（`vars`、`jump`、`next`）で実行します。
-5. EN: Worker returns serializable result (`varsPatch`, `jumpTo`, `requestedNext`) and main thread
-   applies it.\
+   Workerは命令名を検証してプラグインを読み込み、最小context（`vars`、`jump`、`next`、`suspend`、`ui.dispatch`）で実行します。
+5. EN: Worker returns serializable result (`varsPatch`, `jumpTo`, `requestedNext`, `suspended`,
+   `renderCommands`) and main thread applies it.\
    JA: Workerはシリアライズ可能な結果（`varsPatch`, `jumpTo`,
-   `requestedNext`）を返し、メインスレッドが適用します。
+   `requestedNext`, `suspended`, `renderCommands`）を返し、メインスレッドが適用します。
 
 ## Available Commands / 利用可能コマンド
 
