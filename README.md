@@ -37,6 +37,10 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
 
 - EN: Deno 2.6+
 - JA: Deno 2.6以上
+- EN: Node.js 20+ (for Vite/Tauri host)
+- JA: Node.js 20以上（Vite/Tauriホスト用）
+- EN: Rust toolchain (for Tauri backend)
+- JA: Rustツールチェーン（Tauriバックエンド用）
 
 ### Run Tests / テスト実行
 
@@ -62,6 +66,18 @@ deno task demo:serve
 - EN: `sample.jpg` is referenced by the built-in demo scenario in `scripts/demo_server.ts`.
 - JA: `scripts/demo_server.ts` の内蔵デモシナリオは `sample.jpg` を参照します。
 
+### Run Tauri Host (Phase 1) / Tauriホスト起動（フェーズ1）
+
+```bash
+npm install
+mkdir -p public/assets
+# 任意の画像を public/assets/sample.jpg として配置
+npm run tauri:dev
+```
+
+- EN: For browser-only debug without Rust shell, run `npm run dev`.
+- JA: Rustシェルなしでフロントだけ確認する場合は `npm run dev` を使います。
+
 ### Manifest Automation / マニフェスト自動化
 
 ```bash
@@ -81,9 +97,9 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
    host.\
    JA: ランタイムはマニフェスト署名検証とallowlist検証を行い、常駐Workerホストへ実行を委譲します。
 3. EN: Runtime posts `{ op, args, vars, pluginSource }`, and Worker re-validates op and integrity
-   before loading.\
+   before resolving the plugin from a static worker registry.\
    JA: ランタイムは `{ op, args, vars, pluginSource }`
-   を送信し、Worker側で命令名と整合性を再検証してからロードします。
+   を送信し、Worker側で命令名と整合性を再検証したうえで静的レジストリから実行対象を解決します。
 4. EN: Worker executes plugin with minimal context (`vars`, `jump`, `next`, `suspend`, `ui.dispatch`).\
    JA:
    Workerは命令名を検証してプラグインを読み込み、最小context（`vars`、`jump`、`next`、`suspend`、`ui.dispatch`）で実行します。
@@ -109,8 +125,9 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
 - EN: Plugin module path is fixed to `./plugins/${opName}.ts` relative to `import.meta.url`.
 - JA: プラグインパスは `import.meta.url` 基準の `./plugins/${opName}.ts` に固定します。
 
-- EN: Worker is launched with `deno: { permissions: "none" }`.
-- JA: Workerは `deno: { permissions: "none" }` で起動します。
+- EN: In Deno runtime, Worker is launched with `deno: { permissions: "none" }`; in browser/Tauri
+  frontend, browser Worker sandbox is used.
+- JA: Deno実行時は `deno: { permissions: "none" }` でWorkerを起動し、ブラウザ/TauriフロントではブラウザWorkerサンドボックスを利用します。
 
 - EN: Manifest integrity is verified by Ed25519 signature before execution.
 - JA: 実行前にEd25519署名でマニフェスト自体の整合性を検証します。

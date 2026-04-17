@@ -5,12 +5,13 @@ import {
   MAX_VARS_ENTRIES,
   textByteLength,
 } from "./runtime_limits.ts";
-import { type CommandIR, executeCommand } from "./runtime.ts";
+import { type CommandIR, executeCommand, type ExecuteOptions } from "./runtime.ts";
 import type { RenderCommand, VarValue } from "./types.ts";
 import { WorkerHost } from "./worker_host.ts";
 
 const LABEL_NAME_RE = /^[A-Za-z0-9_]+$/;
 const VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const RESERVED_VAR_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_SAVE_DATA_BYTES = 64 * 1024;
 const MAX_SCENARIO_LABELS = 1024;
 const MAX_COMMANDS_PER_LABEL = 4096;
@@ -21,9 +22,11 @@ export class ScenarioSession {
   currentLabel: string | null = null;
   currentIndex = 0;
   private readonly workerHost: WorkerHost;
+  private readonly executeOptions: ExecuteOptions;
 
-  constructor(workerHost = new WorkerHost()) {
+  constructor(workerHost = new WorkerHost(), executeOptions: ExecuteOptions = {}) {
     this.workerHost = workerHost;
+    this.executeOptions = executeOptions;
   }
 
   loadScenario(scenario: Record<string, CommandIR[]>, startLabel: string): void {
@@ -53,7 +56,12 @@ export class ScenarioSession {
       return null;
     }
 
-    const result = await executeCommand(this.runtimeState, command, this.workerHost);
+    const result = await executeCommand(
+      this.runtimeState,
+      command,
+      this.workerHost,
+      this.executeOptions,
+    );
     try {
       if (!result.suspended) {
         if (result.jumpTo !== null) {
@@ -229,6 +237,9 @@ function validateVars(value: unknown): Record<string, VarValue> {
   const vars: Record<string, VarValue> = {};
   for (const [name, raw] of entries) {
     if (!VAR_NAME_RE.test(name)) {
+      throw new Error("invalid save data");
+    }
+    if (RESERVED_VAR_NAMES.has(name)) {
       throw new Error("invalid save data");
     }
     if (name.startsWith("_")) {

@@ -38,7 +38,10 @@ export interface CommandResult {
 
 export interface ExecuteOptions {
   timeoutMs?: number;
+  loadPluginSource?: PluginSourceLoader;
 }
+
+export type PluginSourceLoader = (opName: string) => Promise<string>;
 
 export async function executeCommand(
   state: RuntimeState,
@@ -58,7 +61,7 @@ export async function executeCommand(
     const args = command.args ?? {};
     assertInputLimits(args, state.vars);
 
-    const pluginAsset = await readPluginAsset(command.op);
+    const pluginAsset = await readPluginAsset(command.op, options.loadPluginSource);
     const request: WorkerExecuteRequest = {
       type: "execute",
       requestId,
@@ -115,19 +118,44 @@ async function assertManifestIntegrity(): Promise<void> {
   await manifestIntegrityPromise;
 }
 
-async function readPluginAsset(opName: string): Promise<{ source: string }> {
+async function readPluginAsset(
+  opName: string,
+  customLoader?: PluginSourceLoader,
+): Promise<{ source: string }> {
   if (!OP_NAME_RE.test(opName)) {
     throw new Error("operation denied");
   }
   requireManifestOp(opName);
   const manifestEntry = PLUGIN_MANIFEST[opName];
-  const pluginUrl = new URL(`./plugins/${opName}.ts`, import.meta.url);
-  const source = await Deno.readTextFile(pluginUrl);
+  const source = await loadPluginSource(opName, customLoader);
   const hashHex = await sha256Hex(source);
   if (hashHex !== manifestEntry.sha256) {
     throw new Error("integrity violation");
   }
   return { source };
+}
+
+async function loadPluginSource(
+  opName: string,
+  customLoader?: PluginSourceLoader,
+): Promise<string> {
+  if (customLoader) {
+    const source = await customLoader(opName);
+    if (typeof source !== "string") {
+      throw new Error("operation denied");
+    }
+    return source;
+  }
+
+  const denoGlobal = (globalThis as typeof globalThis & {
+    Deno?: { readTextFile(path: string | URL): Promise<string> };
+  }).Deno;
+  if (!denoGlobal?.readTextFile) {
+    throw new Error("operation denied");
+  }
+
+  const pluginUrl = new URL(`./plugins/${opName}.ts`, import.meta.url);
+  return await denoGlobal.readTextFile(pluginUrl);
 }
 
 function applyWorkerResult(state: RuntimeState, result: WorkerExecuteSuccess): void {

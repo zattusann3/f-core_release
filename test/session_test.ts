@@ -150,6 +150,30 @@ Deno.test("ScenarioSession: importSaveData rejects invalid payloads", () => {
       Error,
       "invalid save data",
     );
+    assertThrows(
+      () =>
+        session.importSaveData(
+          '{"currentLabel":"start","currentIndex":0,"vars":{"__proto__":1}}',
+        ),
+      Error,
+      "invalid save data",
+    );
+    assertThrows(
+      () =>
+        session.importSaveData(
+          '{"currentLabel":"start","currentIndex":0,"vars":{"constructor":1}}',
+        ),
+      Error,
+      "invalid save data",
+    );
+    assertThrows(
+      () =>
+        session.importSaveData(
+          '{"currentLabel":"start","currentIndex":0,"vars":{"prototype":1}}',
+        ),
+      Error,
+      "invalid save data",
+    );
   } finally {
     session.close();
   }

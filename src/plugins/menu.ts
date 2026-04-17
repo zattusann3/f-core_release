@@ -35,7 +35,11 @@ export function execute(context: PluginContext, args: PluginArgs): void {
     return;
   }
 
-  context.jump(String(lastInput));
+  const inputTo = String(lastInput);
+  if (!choices.some((choice) => choice.to === inputTo)) {
+    throw new Error("invalid menu input");
+  }
+  context.jump(inputTo);
 }
 
 function parseChoices(value: unknown): MenuChoice[] {

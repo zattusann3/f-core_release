@@ -102,11 +102,27 @@ This document summarizes commands currently available in this runtime.
 - EN: Execution uses a resident Worker host (not per-command Worker spawn).
 - JA: 実行は常駐Workerホスト方式で行われます（コマンドごとのWorker再生成ではありません）。
 
-- EN: Worker runs with `deno: { permissions: "none" }`.
-- JA: Workerは `deno: { permissions: "none" }` で動作します。
+- EN: Deno runtime launches Worker with `deno: { permissions: "none" }`; browser/Tauri frontend
+  uses browser Worker sandbox.
+- JA: Deno実行時はWorkerを `deno: { permissions: "none" }` で起動し、ブラウザ/Tauri側では
+  ブラウザWorkerサンドボックスを使用します。
 
 - EN: Plugin source integrity is validated against signed manifest hashes.
 - JA: プラグインソース整合性は署名付きマニフェストのハッシュで検証されます。
 
 - EN: Payload size limits are enforced for request/response objects.
 - JA: リクエスト/レスポンスのペイロードサイズ制限が適用されます。
+
+## Host Startup Commands / ホスト起動コマンド
+
+- Deno demo host:
+  - EN: `deno task demo:serve`
+  - JA: `deno task demo:serve`
+
+- Browser dev host (Vite):
+  - EN: `npm run dev`
+  - JA: `npm run dev`
+
+- Tauri desktop host:
+  - EN: `npm run tauri:dev`
+  - JA: `npm run tauri:dev`

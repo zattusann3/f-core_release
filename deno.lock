@@ -14,5 +14,15 @@
     "@std/internal@1.0.12": {
       "integrity": "972a634fd5bc34b242024402972cd5143eac68d8dffaca5eaa4dba30ce17b027"
     }
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@tauri-apps/api@2.0.0",
+        "npm:@tauri-apps/cli@2.0.0",
+        "npm:typescript@^5.6.0",
+        "npm:vite@6"
+      ]
+    }
   }
 }

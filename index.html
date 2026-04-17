@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>f-core Inspector</title>
+    <link rel="stylesheet" href="/src/app.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <section class="panel">
+        <h1>Inspector (司令室)</h1>
+        <div class="controls">
+          <button id="session-start">Session開始</button>
+          <button id="session-step">次へ (Step)</button>
+          <button id="session-save">Save取得</button>
+          <button id="session-load">Save読込</button>
+        </div>
+        <textarea
+          id="save-data"
+          placeholder='{"currentLabel":"start","currentIndex":0,"vars":{}}'
+        ></textarea>
+        <pre id="json-viewer">{}</pre>
+      </section>
+      <section class="panel">
+        <h1>Renderer (映写機)</h1>
+        <iframe id="renderer-frame" src="/renderer.html"></iframe>
+      </section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -75,7 +75,7 @@ function resolveToken(token: string, vars: Readonly<Record<string, VarValue>>): 
     return decodeQuotedString(token);
   }
 
-  if (token in vars) {
+  if (Object.hasOwn(vars, token)) {
     return vars[token];
   }
 

@@ -12,8 +12,6 @@ type SafeOperator =
   | "^>="
   | "^<=";
 
-const RAW_OPERATOR_RE = /^(\+|-|\*|\/|=|==|!=|>|<|>=|<=)$/;
-
 type SafeFn = (left: VarValue, right: VarValue) => VarValue;
 
 const SAFE_FUNCTIONS: Record<SafeOperator, SafeFn> = {
@@ -65,10 +63,6 @@ function evaluateExpression(
 ): VarValue {
   const [leftToken, operatorToken, rightToken] = tokenizeExpression(expression);
 
-  if (RAW_OPERATOR_RE.test(operatorToken)) {
-    throw new Error(`raw operator is forbidden: ${operatorToken}`);
-  }
-
   if (!operatorToken.startsWith("^")) {
     throw new Error(`operator must start with ^: ${operatorToken}`);
   }
@@ -91,7 +85,7 @@ function resolveToken(token: string, vars: Readonly<Record<string, VarValue>>): 
     return decodeQuotedString(token);
   }
 
-  if (token in vars) {
+  if (Object.hasOwn(vars, token)) {
     return vars[token];
   }
 

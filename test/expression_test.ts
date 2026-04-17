@@ -29,3 +29,10 @@ Deno.test("evaluateExpression: supports quoted string literals", () => {
   assertEquals(evaluateExpression('"こんにちは" ^+ "世界"', {}), "こんにちは世界");
   assertEquals(evaluateExpression("'a b' ^+ ' c'", {}), "a b c");
 });
+
+Deno.test("evaluateExpression: does not resolve inherited properties", () => {
+  const vars = Object.create({ hp: 10 }) as Record<string, number>;
+  vars.self = 5;
+  assertThrows(() => evaluateExpression("hp ^+ 1", vars), Error, "unknown token");
+  assertEquals(evaluateExpression("self ^+ 1", vars), 6);
+});

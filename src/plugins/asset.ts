@@ -1,6 +1,7 @@
 import type { PluginArgs, PluginContext } from "../types.ts";
 
 const ASSET_SRC_RE = /^[A-Za-z0-9._-]{1,128}$/;
+const ALLOWED_ASSET_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif"]);
 
 export function execute(context: PluginContext, args: PluginArgs): void {
   const assetType = args["type"];
@@ -40,6 +41,15 @@ function isSafeAssetSrc(src: string): boolean {
     return false;
   }
   if (src.includes("..") || src.includes("/") || src.includes("\\")) {
+    return false;
+  }
+  const lower = src.toLowerCase();
+  const dotIndex = lower.lastIndexOf(".");
+  if (dotIndex <= 0) {
+    return false;
+  }
+  const ext = lower.slice(dotIndex);
+  if (!ALLOWED_ASSET_EXTENSIONS.has(ext)) {
     return false;
   }
   return true;
