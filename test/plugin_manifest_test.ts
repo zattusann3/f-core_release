@@ -35,6 +35,8 @@ Deno.test("plugin manifest: tampered manifest is rejected by signature check", a
 });
 
 Deno.test("plugin manifest: test-only plugins are not allowlisted", () => {
+  assertFalse("conflict" in PLUGIN_MANIFEST);
+  assertFalse("hang" in PLUGIN_MANIFEST);
   assertFalse("badhash" in PLUGIN_MANIFEST);
   assertFalse("unlisted" in PLUGIN_MANIFEST);
 });

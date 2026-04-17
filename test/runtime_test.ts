@@ -57,6 +57,23 @@ Deno.test("executeCommand: runs say plugin", async () => {
   });
 });
 
+Deno.test("executeCommand: say plugin skips DOM append for blank text", async () => {
+  await withWorkerHost(async (workerHost) => {
+    const state = { vars: {} };
+    const result = await executeCommand(state, {
+      op: "say",
+      args: { text: "   " },
+    }, workerHost);
+
+    assertEquals(result.vars.last_say, "   ");
+    assertEquals(result.vars.say_seq, 1);
+    assertEquals(result.requestedNext, true);
+    assertEquals(result.suspended, false);
+    assertEquals(result.jumpTo, null);
+    assertEquals(result.renderCommands, []);
+  });
+});
+
 Deno.test("executeCommand: runs effect plugin and emits UpdateCSSVar", async () => {
   await withWorkerHost(async (workerHost) => {
     const state = { vars: {} };
@@ -106,6 +123,18 @@ Deno.test("executeCommand: runs asset plugin and emits layer image commands", as
   });
 });
 
+Deno.test("executeCommand: asset plugin rejects disallowed file extension", async () => {
+  await withWorkerHost(async (workerHost) => {
+    const state = { vars: {} };
+    await assertRejects(
+      () =>
+        executeCommand(state, { op: "asset", args: { type: "bg", src: "sample.txt" } }, workerHost),
+      Error,
+      "operation rejected",
+    );
+  });
+});
+
 Deno.test("executeCommand: runs menu plugin and suspends without input", async () => {
   await withWorkerHost(async (workerHost) => {
     const state = { vars: {} };
@@ -134,6 +163,26 @@ Deno.test("executeCommand: runs menu plugin and suspends without input", async (
       text: "Go",
       onClickInput: "end_label",
     });
+  });
+});
+
+Deno.test("executeCommand: menu plugin rejects tampered input", async () => {
+  await withWorkerHost(async (workerHost) => {
+    const state = { vars: { _last_input: "hacked" } };
+    await assertRejects(
+      () =>
+        executeCommand(state, {
+          op: "menu",
+          args: {
+            choices: [
+              { text: "Go", to: "end_label" },
+              { text: "Stay", to: "start" },
+            ],
+          },
+        }, workerHost),
+      Error,
+      "operation rejected",
+    );
   });
 });
 
@@ -195,7 +244,16 @@ Deno.test("executeCommand: worker host self-heals after timeout", async () => {
   await withWorkerHost(async (workerHost) => {
     const state = { vars: {} };
     await assertRejects(
-      () => executeCommand(state, { op: "hang" }, workerHost, { timeoutMs: 100 }),
+      () =>
+        executeCommand(
+          state,
+          {
+            op: "say",
+            args: { text: "will timeout", __fixture: "hang" },
+          },
+          workerHost,
+          { timeoutMs: 100 },
+        ),
       Error,
       "operation rejected",
     );
@@ -207,14 +265,21 @@ Deno.test("executeCommand: worker host self-heals after timeout", async () => {
     );
     assertEquals(result.vars.last_say, "recovered");
     assertEquals(result.requestedNext, true);
-  });
+  }, fixtureWorkerOptions());
 });
 
-async function withWorkerHost(run: (workerHost: WorkerHost) => Promise<void>): Promise<void> {
-  const workerHost = new WorkerHost();
+async function withWorkerHost(
+  run: (workerHost: WorkerHost) => Promise<void>,
+  options?: ConstructorParameters<typeof WorkerHost>[0],
+): Promise<void> {
+  const workerHost = new WorkerHost(options);
   try {
     await run(workerHost);
   } finally {
     workerHost.close();
   }
+}
+
+function fixtureWorkerOptions(): ConstructorParameters<typeof WorkerHost>[0] {
+  return { workerUrl: new URL("./fixtures/worker_runner_fixture.ts", import.meta.url) };
 }

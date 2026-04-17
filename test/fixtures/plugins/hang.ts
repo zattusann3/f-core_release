@@ -1,4 +1,4 @@
-import type { PluginArgs, PluginContext } from "../types.ts";
+import type { PluginArgs, PluginContext } from "../../../src/types.ts";
 
 export function execute(_context: PluginContext, _args: PluginArgs): void {
   while (true) {

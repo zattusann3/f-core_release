@@ -10,10 +10,19 @@ interface PendingRequest {
   timeoutId: number;
 }
 
+export interface WorkerHostOptions {
+  workerUrl?: URL;
+}
+
 export class WorkerHost {
   private worker: Worker | null = null;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly workerUrl: URL;
   private closed = false;
+
+  constructor(options: WorkerHostOptions = {}) {
+    this.workerUrl = options.workerUrl ?? new URL("./worker_runner.ts", import.meta.url);
+  }
 
   execute(request: WorkerExecuteRequest, timeoutMs: number): Promise<WorkerExecuteSuccess> {
     if (this.closed) {
@@ -54,10 +63,13 @@ export class WorkerHost {
       return this.worker;
     }
 
-    const worker = new Worker(new URL("./worker_runner.ts", import.meta.url).href, {
-      type: "module",
-      deno: { permissions: "none" },
-    });
+    const denoGlobal = (globalThis as typeof globalThis & { Deno?: unknown }).Deno;
+    const worker = denoGlobal !== undefined
+      ? new Worker(
+        this.workerUrl,
+        { type: "module", deno: { permissions: "none" } } as WorkerOptions,
+      )
+      : new Worker(this.workerUrl, { type: "module" });
 
     worker.onmessage = (event: MessageEvent<WorkerExecuteResponse>) => {
       this.handleMessage(event.data);

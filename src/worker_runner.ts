@@ -1,6 +1,12 @@
 import { createPluginContext, type FlowControl, type RuntimeState } from "./context.ts";
 import { sha256Hex } from "./manifest_crypto.ts";
 import { PLUGIN_MANIFEST } from "./plugin_manifest.ts";
+import { execute as assetExecute } from "./plugins/asset.ts";
+import { execute as choiceExecute } from "./plugins/choice.ts";
+import { execute as effectExecute } from "./plugins/effect.ts";
+import { execute as menuExecute } from "./plugins/menu.ts";
+import { execute as sayExecute } from "./plugins/say.ts";
+import { execute as setExecute } from "./plugins/set.ts";
 import {
   jsonByteLength,
   MAX_ARGS_BYTES,
@@ -21,6 +27,14 @@ import type {
 } from "./worker_protocol.ts";
 
 const OP_NAME_RE = /^[a-z0-9_]+$/;
+const WORKER_PLUGIN_REGISTRY: Readonly<Record<string, PluginModule>> = Object.freeze({
+  asset: { execute: assetExecute },
+  choice: { execute: choiceExecute },
+  effect: { execute: effectExecute },
+  menu: { execute: menuExecute },
+  say: { execute: sayExecute },
+  set: { execute: setExecute },
+});
 
 self.onmessage = (event: MessageEvent<WorkerExecuteRequest>) => {
   run(event.data);
@@ -94,27 +108,11 @@ async function loadPluginInWorker(
   }
 
   assertNoRuntimeModuleLoading(pluginSource);
-  const moduleUrl = sourceToDataUrl(pluginSource);
-  const loaded = await import(moduleUrl) as Record<string, unknown>;
-  if (!loaded || typeof loaded.execute !== "function") {
+  const plugin = WORKER_PLUGIN_REGISTRY[opName];
+  if (!plugin) {
     throw new Error("operation unavailable");
   }
-  return { execute: loaded.execute as PluginModule["execute"] };
-}
-
-function sourceToDataUrl(source: string): string {
-  const bytes = new TextEncoder().encode(source);
-  return `data:application/typescript;base64,${bytesToBase64(bytes)}`;
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
+  return plugin;
 }
 
 function computeVarsPatch(
