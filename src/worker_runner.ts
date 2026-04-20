@@ -1,12 +1,6 @@
 import { createPluginContext, type FlowControl, type RuntimeState } from "./context.ts";
 import { sha256Hex } from "./manifest_crypto.ts";
 import { PLUGIN_MANIFEST } from "./plugin_manifest.ts";
-import { execute as assetExecute } from "./plugins/asset.ts";
-import { execute as choiceExecute } from "./plugins/choice.ts";
-import { execute as effectExecute } from "./plugins/effect.ts";
-import { execute as menuExecute } from "./plugins/menu.ts";
-import { execute as sayExecute } from "./plugins/say.ts";
-import { execute as setExecute } from "./plugins/set.ts";
 import {
   jsonByteLength,
   MAX_ARGS_BYTES,
@@ -27,13 +21,15 @@ import type {
 } from "./worker_protocol.ts";
 
 const OP_NAME_RE = /^[a-z0-9_]+$/;
-const WORKER_PLUGIN_REGISTRY: Readonly<Record<string, PluginModule>> = Object.freeze({
-  asset: { execute: assetExecute },
-  choice: { execute: choiceExecute },
-  effect: { execute: effectExecute },
-  menu: { execute: menuExecute },
-  say: { execute: sayExecute },
-  set: { execute: setExecute },
+type PluginFactory = () => Promise<unknown>;
+
+const WORKER_PLUGIN_FACTORIES: Readonly<Record<string, PluginFactory>> = Object.freeze({
+  asset: () => import("./plugins/asset.ts"),
+  choice: () => import("./plugins/choice.ts"),
+  effect: () => import("./plugins/effect.ts"),
+  menu: () => import("./plugins/menu.ts"),
+  say: () => import("./plugins/say.ts"),
+  set: () => import("./plugins/set.ts"),
 });
 
 self.onmessage = (event: MessageEvent<WorkerExecuteRequest>) => {
@@ -108,9 +104,20 @@ async function loadPluginInWorker(
   }
 
   assertNoRuntimeModuleLoading(pluginSource);
-  const plugin = WORKER_PLUGIN_REGISTRY[opName];
-  if (!plugin) {
+  const factory = WORKER_PLUGIN_FACTORIES[opName];
+  if (!factory) {
     throw new Error("operation unavailable");
+  }
+  // Note: There is a theoretical TOCTOU gap between verifying the hash of
+  // `pluginSource` and dynamically importing the file. We intentionally accept
+  // this risk. Evaluating `pluginSource` directly (e.g., via Data URIs or eval)
+  // would violate our strict CSP (`default-src 'self'`). In a production Tauri
+  // environment, the assets are bundled in a read-only VFS, making local file
+  // tampering during execution practically impossible.
+  const imported = await factory();
+  const plugin = toPluginModule(imported);
+  if (!plugin) {
+    throw new Error("operation denied");
   }
   return plugin;
 }
@@ -254,4 +261,15 @@ function extractRequestId(value: unknown): string {
     return value["requestId"];
   }
   return "unknown";
+}
+
+function toPluginModule(value: unknown): PluginModule | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const execute = (value as Record<string, unknown>)["execute"];
+  if (typeof execute !== "function") {
+    return null;
+  }
+  return { execute: execute as PluginModule["execute"] };
 }

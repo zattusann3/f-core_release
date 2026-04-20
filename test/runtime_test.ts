@@ -240,6 +240,27 @@ Deno.test("executeCommand: rejects oversized vars snapshot", async () => {
   });
 });
 
+Deno.test("executeCommand: rejects vars patch that exceeds vars entry limit after apply", async () => {
+  await withWorkerHost(async (workerHost) => {
+    const state = {
+      vars: Object.fromEntries(Array.from({ length: 255 }, (_, i) => [`k${i}`, i])),
+    };
+    await assertRejects(
+      () =>
+        executeCommand(
+          state,
+          { op: "say", args: { text: "overflow" } },
+          workerHost,
+        ),
+      Error,
+      "operation rejected",
+    );
+    assertEquals(Object.keys(state.vars).length, 255);
+    assertEquals("last_say" in state.vars, false);
+    assertEquals("say_seq" in state.vars, false);
+  });
+});
+
 Deno.test("executeCommand: worker host self-heals after timeout", async () => {
   await withWorkerHost(async (workerHost) => {
     const state = { vars: {} };

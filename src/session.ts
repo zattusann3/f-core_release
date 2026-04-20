@@ -23,6 +23,7 @@ export class ScenarioSession {
   currentIndex = 0;
   private readonly workerHost: WorkerHost;
   private readonly executeOptions: ExecuteOptions;
+  private readonly stepMutex = createAsyncMutex();
 
   constructor(workerHost = new WorkerHost(), executeOptions: ExecuteOptions = {}) {
     this.workerHost = workerHost;
@@ -42,41 +43,46 @@ export class ScenarioSession {
   }
 
   async step(): Promise<RenderCommand[] | null> {
-    if (this.currentLabel === null) {
-      throw new Error("session not started");
-    }
-    const commands = this.scenario[this.currentLabel];
-    if (!Array.isArray(commands)) {
-      throw new Error("invalid session state");
-    }
-
-    const command = commands[this.currentIndex];
-    if (!command) {
-      this.runtimeState.vars["_last_input"] = null;
-      return null;
-    }
-
-    const result = await executeCommand(
-      this.runtimeState,
-      command,
-      this.workerHost,
-      this.executeOptions,
-    );
+    const release = await this.stepMutex.acquire();
     try {
-      if (!result.suspended) {
-        if (result.jumpTo !== null) {
-          if (!(result.jumpTo in this.scenario)) {
-            throw new Error("invalid session state");
-          }
-          this.currentLabel = result.jumpTo;
-          this.currentIndex = 0;
-        } else if (result.requestedNext) {
-          this.currentIndex += 1;
-        }
+      if (this.currentLabel === null) {
+        throw new Error("session not started");
       }
-      return [...result.renderCommands];
+      const commands = this.scenario[this.currentLabel];
+      if (!Array.isArray(commands)) {
+        throw new Error("invalid session state");
+      }
+
+      const command = commands[this.currentIndex];
+      if (!command) {
+        this.runtimeState.vars["_last_input"] = null;
+        return null;
+      }
+
+      const result = await executeCommand(
+        this.runtimeState,
+        command,
+        this.workerHost,
+        this.executeOptions,
+      );
+      try {
+        if (!result.suspended) {
+          if (result.jumpTo !== null) {
+            if (!(result.jumpTo in this.scenario)) {
+              throw new Error("invalid session state");
+            }
+            this.currentLabel = result.jumpTo;
+            this.currentIndex = 0;
+          } else if (result.requestedNext) {
+            this.currentIndex += 1;
+          }
+        }
+        return [...result.renderCommands];
+      } finally {
+        this.runtimeState.vars["_last_input"] = null;
+      }
     } finally {
-      this.runtimeState.vars["_last_input"] = null;
+      release();
     }
   }
 
@@ -280,4 +286,26 @@ function safeJsonByteLength(value: unknown): number {
   } catch {
     throw new Error("invalid save data");
   }
+}
+
+function createAsyncMutex(): { acquire: () => Promise<() => void> } {
+  let locked = false;
+  const waiters: Array<() => void> = [];
+
+  return {
+    async acquire(): Promise<() => void> {
+      if (locked) {
+        await new Promise<void>((resolve) => waiters.push(resolve));
+      }
+      locked = true;
+      return () => {
+        const next = waiters.shift();
+        if (next) {
+          next();
+        } else {
+          locked = false;
+        }
+      };
+    },
+  };
 }

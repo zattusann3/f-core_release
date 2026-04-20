@@ -25,8 +25,7 @@ if (
 }
 
 window.addEventListener("message", async (event) => {
-  if (event.origin !== window.location.origin) return;
-  if (event.source !== rendererFrame.contentWindow) return;
+  if (!isTrustedRendererEvent(event, rendererFrame)) return;
   if (!isInputMessage(event.data)) return;
 
   try {
@@ -157,7 +156,7 @@ function sendRenderCommands(
 ): void {
   frame.contentWindow?.postMessage(
     { type: "fcore.renderCommands", renderCommands },
-    window.location.origin,
+    "*",
   );
 }
 
@@ -176,4 +175,15 @@ function isInputMessage(value: unknown): value is { type: "fcore.input"; value: 
     typeof input === "number" ||
     typeof input === "boolean"
   );
+}
+
+function isTrustedRendererEvent(
+  event: MessageEvent<unknown>,
+  frame: HTMLIFrameElement,
+): boolean {
+  const frameWindow = frame.contentWindow;
+  if (!frameWindow || event.source !== frameWindow) {
+    return false;
+  }
+  return event.origin === window.location.origin || event.origin === "null";
 }

@@ -20,7 +20,6 @@ import { WorkerHost } from "./worker_host.ts";
 
 const DEFAULT_TIMEOUT_MS = 1000;
 const OP_NAME_RE = /^[a-z0-9_]+$/;
-const EXECUTION_MUTEX = createAsyncMutex();
 let manifestIntegrityPromise: Promise<void> | null = null;
 
 export interface CommandIR {
@@ -49,7 +48,6 @@ export async function executeCommand(
   workerHost: WorkerHost,
   options: ExecuteOptions = {},
 ): Promise<CommandResult> {
-  const release = await EXECUTION_MUTEX.acquire();
   const requestId = crypto.randomUUID();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const startedAt = performance.now();
@@ -91,8 +89,6 @@ export async function executeCommand(
       error: errorToLog(err),
     });
     throw new Error("operation rejected");
-  } finally {
-    release();
   }
 }
 
@@ -165,6 +161,7 @@ function applyWorkerResult(state: RuntimeState, result: WorkerExecuteSuccess): v
     throw new Error("conflicting flow result");
   }
 
+  const nextVars: Record<string, VarValue> = { ...state.vars };
   for (const [name, value] of Object.entries(result.varsPatch)) {
     if (!isValidVarName(name)) {
       throw new Error("invalid variable name");
@@ -175,8 +172,10 @@ function applyWorkerResult(state: RuntimeState, result: WorkerExecuteSuccess): v
     if (name.startsWith("_")) {
       throw new Error("reserved variable write");
     }
-    state.vars[name] = value;
+    nextVars[name] = value;
   }
+  assertVarsLimits(nextVars);
+  state.vars = nextVars;
 }
 
 function assertInputLimits(args: PluginArgs, vars: Readonly<Record<string, VarValue>>): void {
@@ -207,6 +206,16 @@ function assertOutputLimits(result: WorkerExecuteSuccess): void {
     throw new Error("resource limit exceeded");
   }
   if (safeJsonByteLength(result.renderCommands) > MAX_RENDER_COMMANDS_BYTES) {
+    throw new Error("resource limit exceeded");
+  }
+}
+
+function assertVarsLimits(vars: Readonly<Record<string, VarValue>>): void {
+  const varsEntries = Object.keys(vars).length;
+  if (varsEntries > MAX_VARS_ENTRIES) {
+    throw new Error("resource limit exceeded");
+  }
+  if (safeJsonByteLength(vars) > MAX_VARS_BYTES) {
     throw new Error("resource limit exceeded");
   }
 }
@@ -254,26 +263,4 @@ function errorToLog(err: unknown): Record<string, unknown> {
     return { name: err.name, message: err.message };
   }
   return { message: String(err) };
-}
-
-function createAsyncMutex(): { acquire: () => Promise<() => void> } {
-  let locked = false;
-  const waiters: Array<() => void> = [];
-
-  return {
-    async acquire(): Promise<() => void> {
-      if (locked) {
-        await new Promise<void>((resolve) => waiters.push(resolve));
-      }
-      locked = true;
-      return () => {
-        const next = waiters.shift();
-        if (next) {
-          next();
-        } else {
-          locked = false;
-        }
-      };
-    },
-  };
 }

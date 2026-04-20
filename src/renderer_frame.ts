@@ -1,7 +1,7 @@
 import { applyRenderCommands } from "./renderer.ts";
 
 window.addEventListener("message", (event) => {
-  if (event.origin !== window.location.origin) return;
+  if (event.source !== window.parent) return;
   const data = event.data;
   if (!isRenderMessage(data)) return;
 

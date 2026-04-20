@@ -40,6 +40,8 @@ function appendNode(command) {
   }
   if (command.onClickInput !== undefined) {
     node.onclick = () => {
+      // The sandboxed iframe has an opaque origin ("null"), so exact targetOrigin
+      // matching is not reliable here. The parent validates event.source instead.
       window.parent.postMessage(
         { type: "fcore.input", value: command.onClickInput },
         "*",

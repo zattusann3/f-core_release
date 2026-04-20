@@ -3,8 +3,7 @@ const saveData = document.getElementById("save-data");
 const rendererFrame = document.getElementById("renderer-frame");
 
 window.addEventListener("message", async (event) => {
-  if (event.origin !== window.location.origin) return;
-  if (event.source !== rendererFrame.contentWindow) return;
+  if (!isTrustedRendererEvent(event, rendererFrame)) return;
   if (!isInputMessage(event.data)) return;
 
   const inputResult = await fetchJson("/api/session/input", {
@@ -62,7 +61,7 @@ document.getElementById("session-load")?.addEventListener("click", async () => {
 function sendRenderCommands(renderCommands) {
   rendererFrame.contentWindow?.postMessage(
     { type: "fcore.renderCommands", renderCommands },
-    window.location.origin,
+    "*",
   );
 }
 
@@ -81,4 +80,12 @@ function isInputMessage(value) {
   const input = value.value;
   return input === null || typeof input === "string" || typeof input === "number" ||
     typeof input === "boolean";
+}
+
+function isTrustedRendererEvent(event, frame) {
+  const frameWindow = frame.contentWindow;
+  if (!frameWindow || event.source !== frameWindow) {
+    return false;
+  }
+  return event.origin === window.location.origin || event.origin === "null";
 }
