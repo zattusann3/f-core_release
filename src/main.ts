@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { loadBundledPluginSource } from "./browser_plugin_sources.ts";
 import { parseScenario } from "./parser.ts";
+import type { CommandIR } from "./runtime.ts";
 import { ScenarioSession } from "./session.ts";
 import { WorkerHost } from "./worker_host.ts";
 import type { RenderCommand, VarValue } from "./types.ts";
@@ -9,6 +10,7 @@ const workerHost = new WorkerHost();
 const session = new ScenarioSession(workerHost, {
   loadPluginSource: loadBundledPluginSource,
 });
+let cachedMarkdown: string | null = null;
 
 const jsonViewer = document.getElementById("json-viewer");
 const saveDataInput = document.getElementById("save-data");
@@ -47,7 +49,7 @@ window.addEventListener("message", async (event) => {
 document.getElementById("session-start")?.addEventListener("click", () => {
   void (async () => {
     try {
-      const markdown = await loadScenarioMarkdown();
+      const markdown = await ensureScenarioMarkdown();
       const scenario = parseScenario(markdown);
       session.loadScenario(scenario, "start");
       sendRenderCommands(rendererFrame, [
@@ -112,6 +114,23 @@ document.getElementById("session-load")?.addEventListener("click", () => {
   }
 });
 
+document.getElementById("export-pptx")?.addEventListener("click", () => {
+  void (async () => {
+    try {
+      const markdown = await ensureScenarioMarkdown();
+      const ast = parseScenario(markdown) as Record<string, CommandIR[]>;
+      const flatCommands = Object.values(ast).flat();
+
+      const exportedTo = await invoke<string>("export_pptx", {
+        ast: flatCommands,
+      });
+      renderJson(jsonViewer, { exported: true, outputPath: exportedTo });
+    } catch {
+      renderJson(jsonViewer, { error: "operation rejected" });
+    }
+  })();
+});
+
 window.addEventListener("beforeunload", () => {
   session.close();
 });
@@ -122,6 +141,14 @@ async function loadScenarioMarkdown(): Promise<string> {
   } catch {
     throw new Error("operation rejected");
   }
+}
+
+async function ensureScenarioMarkdown(): Promise<string> {
+  if (cachedMarkdown !== null) {
+    return cachedMarkdown;
+  }
+  cachedMarkdown = await loadScenarioMarkdown();
+  return cachedMarkdown;
 }
 
 function sendRenderCommands(
