@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 use std::{
+    collections::{BTreeSet, HashMap},
     fs::{self, File},
     io::{Seek, Write},
     path::{Component, PathBuf},
@@ -13,7 +14,22 @@ use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 const DEFAULT_SCENARIO_RESOURCE: &str = "assets/demo_scenario.md";
 const MAX_SLIDES: usize = 200;
 const MAX_SLIDE_CHARS: usize = 4000;
+const MAX_MEDIA_FILE_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_MEDIA_TOTAL_BYTES: u64 = 50 * 1024 * 1024;
 const CORE_TIMESTAMP: &str = "2026-04-20T00:00:00Z";
+
+#[derive(Clone)]
+struct SlideData {
+    text: String,
+    background: Option<String>,
+}
+
+struct MediaAsset {
+    index: usize,
+    file_name: String,
+    extension: String,
+    bytes: Vec<u8>,
+}
 
 #[tauri::command]
 fn load_scenario(app: AppHandle, path: Option<String>) -> Result<String, String> {
@@ -22,7 +38,9 @@ fn load_scenario(app: AppHandle, path: Option<String>) -> Result<String, String>
 
 #[tauri::command]
 async fn export_pptx(window: Window, ast: Value) -> Result<String, String> {
+    let app = window.app_handle();
     let slides = parse_say_slides_from_ast(&ast)?;
+    let media_assets = collect_media_assets(&app, &slides);
 
     let output_path = window
         .dialog()
@@ -34,7 +52,7 @@ async fn export_pptx(window: Window, ast: Value) -> Result<String, String> {
         .into_path()
         .map_err(|_| "invalid path selected".to_string())?;
 
-    write_pptx(&output_path, &slides).map_err(|err| {
+    write_pptx(&output_path, &slides, &media_assets).map_err(|err| {
         eprintln!("[Engine Internal] export_pptx write failed: {}", err);
         "operation rejected".to_string()
     })?;
@@ -105,12 +123,13 @@ fn resolve_scenario_resource_key(path: Option<&str>) -> Result<String, String> {
     }
 }
 
-fn parse_say_slides_from_ast(ast: &Value) -> Result<Vec<String>, String> {
+fn parse_say_slides_from_ast(ast: &Value) -> Result<Vec<SlideData>, String> {
     let commands = ast
         .as_array()
         .ok_or_else(|| "operation rejected".to_string())?;
 
-    let mut slides: Vec<String> = Vec::new();
+    let mut slides: Vec<SlideData> = Vec::new();
+    let mut current_bg: Option<String> = None;
     for command in commands {
         let Some(command_obj) = command.as_object() else {
             continue;
@@ -118,6 +137,34 @@ fn parse_say_slides_from_ast(ast: &Value) -> Result<Vec<String>, String> {
         let Some(op) = command_obj.get("op").and_then(Value::as_str) else {
             continue;
         };
+
+        if op == "asset" {
+            let args = command_obj.get("args").and_then(Value::as_object);
+            let asset_type = args
+                .and_then(|value| value.get("type"))
+                .and_then(Value::as_str);
+            if asset_type == Some("bg") {
+                let bg_src = args
+                    .and_then(|value| value.get("src"))
+                    .and_then(Value::as_str);
+                if let Some(src) = bg_src {
+                    match resolve_asset_resource_key(src) {
+                        Ok(key) => current_bg = Some(key),
+                        Err(err) => {
+                            current_bg = None;
+                            eprintln!(
+                                "[Engine Internal] export_pptx asset bg path rejected src='{}': {}",
+                                src, err
+                            );
+                        }
+                    }
+                } else {
+                    current_bg = None;
+                }
+            }
+            continue;
+        }
+
         if op != "say" {
             continue;
         }
@@ -133,7 +180,10 @@ fn parse_say_slides_from_ast(ast: &Value) -> Result<Vec<String>, String> {
             if trimmed.is_empty() {
                 continue;
             }
-            slides.push(trimmed.chars().take(MAX_SLIDE_CHARS).collect::<String>());
+            slides.push(SlideData {
+                text: trimmed.chars().take(MAX_SLIDE_CHARS).collect::<String>(),
+                background: current_bg.clone(),
+            });
             if slides.len() >= MAX_SLIDES {
                 return Ok(slides);
             }
@@ -141,19 +191,198 @@ fn parse_say_slides_from_ast(ast: &Value) -> Result<Vec<String>, String> {
     }
 
     if slides.is_empty() {
-        slides.push("f-core export".to_string());
+        slides.push(SlideData {
+            text: "f-core export".to_string(),
+            background: current_bg,
+        });
     }
     Ok(slides)
 }
 
-fn write_pptx(output_path: &PathBuf, slides: &[String]) -> Result<(), String> {
+fn collect_media_assets(app: &AppHandle, slides: &[SlideData]) -> HashMap<String, MediaAsset> {
+    let mut media_assets: HashMap<String, MediaAsset> = HashMap::new();
+    let mut total_bytes: u64 = 0;
+
+    for slide in slides {
+        let Some(bg_key) = slide.background.as_ref() else {
+            continue;
+        };
+        if media_assets.contains_key(bg_key) {
+            continue;
+        }
+
+        let extension = match detect_image_extension(bg_key) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!(
+                    "[Engine Internal] export_pptx skipped bg='{}': {}",
+                    bg_key, err
+                );
+                continue;
+            }
+        };
+        let bytes = match read_resource_bytes(app, bg_key) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!(
+                    "[Engine Internal] export_pptx skipped bg='{}': {}",
+                    bg_key, err
+                );
+                continue;
+            }
+        };
+        let bytes_len = bytes.len() as u64;
+        if total_bytes.saturating_add(bytes_len) > MAX_MEDIA_TOTAL_BYTES {
+            eprintln!(
+                "[Engine Internal] export_pptx media budget exceeded at bg='{}'; limit={} bytes",
+                bg_key, MAX_MEDIA_TOTAL_BYTES
+            );
+            continue;
+        }
+
+        total_bytes = total_bytes.saturating_add(bytes_len);
+        let index = media_assets.len() + 1;
+        let file_name = format!("image{index}.{extension}");
+        media_assets.insert(
+            bg_key.clone(),
+            MediaAsset {
+                index,
+                file_name,
+                extension,
+                bytes,
+            },
+        );
+
+        if total_bytes == MAX_MEDIA_TOTAL_BYTES {
+            break;
+        }
+    }
+
+    media_assets
+}
+
+fn resolve_asset_resource_key(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("operation rejected".to_string());
+    }
+
+    let sanitized = trimmed.replace('\\', "/");
+    let candidate = PathBuf::from(sanitized);
+    if candidate.is_absolute() {
+        return Err("operation rejected".to_string());
+    }
+
+    let mut normalized_parts: Vec<String> = Vec::new();
+    for part in candidate.components() {
+        match part {
+            Component::Prefix(_) | Component::RootDir => {
+                return Err("operation rejected".to_string())
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if normalized_parts.pop().is_none() {
+                    return Err("operation rejected".to_string());
+                }
+            }
+            Component::Normal(segment) => {
+                let Some(segment_str) = segment.to_str() else {
+                    return Err("operation rejected".to_string());
+                };
+                if segment_str.is_empty() {
+                    continue;
+                }
+                normalized_parts.push(segment_str.to_string());
+            }
+        }
+    }
+
+    if normalized_parts.is_empty() {
+        return Err("operation rejected".to_string());
+    }
+    if normalized_parts.first().map(String::as_str) != Some("assets") {
+        normalized_parts.insert(0, "assets".to_string());
+    }
+    if normalized_parts.len() < 2 {
+        return Err("operation rejected".to_string());
+    }
+    Ok(normalized_parts.join("/"))
+}
+
+fn detect_image_extension(resource_key: &str) -> Result<String, String> {
+    let ext = PathBuf::from(resource_key)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .ok_or_else(|| "operation rejected".to_string())?;
+
+    match ext.as_str() {
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" => Ok(ext),
+        _ => Err("operation rejected".to_string()),
+    }
+}
+
+fn read_resource_bytes(app: &AppHandle, resource_key: &str) -> Result<Vec<u8>, String> {
+    let resource_path = app
+        .path()
+        .resolve(resource_key, BaseDirectory::Resource)
+        .map_err(|_| "operation rejected".to_string())?;
+
+    match read_checked_resource_bytes(&resource_path) {
+        Ok(bytes) => Ok(bytes),
+        Err(primary_err) => {
+            let fallback_path = app
+                .path()
+                .resolve(format!("_up_/{resource_key}"), BaseDirectory::Resource)
+                .map_err(|_| "operation rejected".to_string())?;
+            read_checked_resource_bytes(&fallback_path).map_err(|fallback_err| {
+                eprintln!(
+                    "[Engine Internal] resource read failed path='{}': {}; fallback='{}': {}",
+                    resource_path.display(),
+                    primary_err,
+                    fallback_path.display(),
+                    fallback_err
+                );
+                "operation rejected".to_string()
+            })
+        }
+    }
+}
+
+fn read_checked_resource_bytes(path: &PathBuf) -> Result<Vec<u8>, String> {
+    let metadata = fs::metadata(path).map_err(|err| format!("metadata failed: {err}"))?;
+    if metadata.len() > MAX_MEDIA_FILE_BYTES {
+        return Err(format!(
+            "media file too large ({} > {} bytes)",
+            metadata.len(),
+            MAX_MEDIA_FILE_BYTES
+        ));
+    }
+
+    let bytes = fs::read(path).map_err(|err| format!("read failed: {err}"))?;
+    if (bytes.len() as u64) > MAX_MEDIA_FILE_BYTES {
+        return Err(format!(
+            "media file too large ({} > {} bytes)",
+            bytes.len(),
+            MAX_MEDIA_FILE_BYTES
+        ));
+    }
+    Ok(bytes)
+}
+
+fn write_pptx(
+    output_path: &PathBuf,
+    slides: &[SlideData],
+    media_assets: &HashMap<String, MediaAsset>,
+) -> Result<(), String> {
     let file = File::create(output_path).map_err(|err| format!("create failed: {err}"))?;
     let mut zip = ZipWriter::new(file);
+    let image_extensions = collect_image_extensions(media_assets);
 
     write_zip_entry(
         &mut zip,
         "[Content_Types].xml",
-        &content_types_xml(slides.len()),
+        &content_types_xml(slides.len(), &image_extensions),
     )?;
     write_zip_entry(&mut zip, "_rels/.rels", ROOT_RELS_XML)?;
     write_zip_entry(&mut zip, "docProps/core.xml", &doc_props_core_xml())?;
@@ -194,17 +423,32 @@ fn write_pptx(output_path: &PathBuf, slides: &[String]) -> Result<(), String> {
     )?;
     write_zip_entry(&mut zip, "ppt/theme/theme1.xml", THEME_XML)?;
 
-    for (index, text) in slides.iter().enumerate() {
+    let mut sorted_media_assets: Vec<&MediaAsset> = media_assets.values().collect();
+    sorted_media_assets.sort_by_key(|asset| asset.index);
+    for media in sorted_media_assets {
+        write_zip_entry_bytes(
+            &mut zip,
+            &format!("ppt/media/{}", media.file_name),
+            &media.bytes,
+        )?;
+    }
+
+    for (index, slide) in slides.iter().enumerate() {
         let slide_no = index + 1;
+        let background_media = slide
+            .background
+            .as_ref()
+            .and_then(|bg_key| media_assets.get(bg_key));
+
         write_zip_entry(
             &mut zip,
             &format!("ppt/slides/slide{slide_no}.xml"),
-            &slide_xml(text),
+            &slide_xml(&slide.text, background_media.map(|_| "rId2")),
         )?;
         write_zip_entry(
             &mut zip,
             &format!("ppt/slides/_rels/slide{slide_no}.xml.rels"),
-            SLIDE_RELS_XML,
+            &slide_rels_xml(background_media.map(|media| media.file_name.as_str())),
         )?;
     }
 
@@ -229,11 +473,42 @@ fn write_zip_entry<W: Write + Seek>(
     Ok(())
 }
 
-fn content_types_xml(slide_count: usize) -> String {
+fn write_zip_entry_bytes<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
+    entry_path: &str,
+    content: &[u8],
+) -> Result<(), String> {
+    let options = FileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+
+    zip.start_file(entry_path, options)
+        .map_err(|err| format!("zip start_file failed: {err}"))?;
+    zip.write_all(content)
+        .map_err(|err| format!("zip write failed: {err}"))?;
+    Ok(())
+}
+
+fn collect_image_extensions(media_assets: &HashMap<String, MediaAsset>) -> BTreeSet<String> {
+    let mut extensions = BTreeSet::new();
+    for asset in media_assets.values() {
+        extensions.insert(asset.extension.clone());
+    }
+    extensions
+}
+
+fn content_types_xml(slide_count: usize, image_extensions: &BTreeSet<String>) -> String {
     let mut overrides = String::new();
     for i in 1..=slide_count {
         overrides.push_str(&format!(
             r#"<Override PartName="/ppt/slides/slide{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>"#
+        ));
+    }
+    let mut media_defaults = String::new();
+    for ext in image_extensions {
+        let content_type = image_content_type(ext);
+        media_defaults.push_str(&format!(
+            r#"<Default Extension="{ext}" ContentType="{content_type}"/>"#
         ));
     }
 
@@ -242,6 +517,7 @@ fn content_types_xml(slide_count: usize) -> String {
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
+  {media_defaults}
   <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
   <Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>
   <Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>
@@ -251,6 +527,17 @@ fn content_types_xml(slide_count: usize) -> String {
   {overrides}
 </Types>"#
     )
+}
+
+fn image_content_type(extension: &str) -> &'static str {
+    match extension {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
 }
 
 fn presentation_xml(slide_count: usize) -> String {
@@ -352,14 +639,30 @@ fn doc_props_app_xml(slide_count: usize) -> String {
     )
 }
 
-fn slide_xml(text: &str) -> String {
+fn slide_xml(text: &str, background_rel_id: Option<&str>) -> String {
     let escaped = xml_escape(text);
+    let background_xml = if let Some(rel_id) = background_rel_id {
+        format!(
+            r#"<p:bg>
+    <p:bgPr>
+      <a:blipFill rotWithShape="1">
+        <a:blip r:embed="{rel_id}"/>
+        <a:stretch><a:fillRect/></a:stretch>
+      </a:blipFill>
+      <a:effectLst/>
+    </p:bgPr>
+  </p:bg>"#
+        )
+    } else {
+        String::new()
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
   xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
   <p:cSld>
+    {background_xml}
     <p:spTree>
       <p:nvGrpSpPr>
         <p:cNvPr id="1" name=""/>
@@ -411,6 +714,24 @@ fn slide_xml(text: &str) -> String {
     )
 }
 
+fn slide_rels_xml(image_file_name: Option<&str>) -> String {
+    let image_relationship = if let Some(file_name) = image_file_name {
+        format!(
+            r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/{file_name}"/>"#
+        )
+    } else {
+        String::new()
+    };
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
+  {image_relationship}
+</Relationships>"#
+    )
+}
+
 fn xml_escape(raw: &str) -> String {
     let mut escaped = String::with_capacity(raw.len() + 10);
     for c in raw.chars() {
@@ -433,11 +754,6 @@ const ROOT_RELS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
   <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
-</Relationships>"#;
-
-const SLIDE_RELS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
 </Relationships>"#;
 
 const SLIDE_LAYOUT_RELS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -557,4 +873,106 @@ fn main() {
         .invoke_handler(tauri::generate_handler![load_scenario, export_pptx])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::{
+        fs::{self, File},
+        io::Write,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn resolve_asset_resource_key_preserves_assets_path() {
+        let result = resolve_asset_resource_key("assets/bg.png").expect("must resolve");
+        assert_eq!(result, "assets/bg.png");
+    }
+
+    #[test]
+    fn resolve_asset_resource_key_prefixes_assets_for_relative_path() {
+        let result = resolve_asset_resource_key("bg.png").expect("must resolve");
+        assert_eq!(result, "assets/bg.png");
+    }
+
+    #[test]
+    fn resolve_asset_resource_key_normalizes_dot_and_parent_segments() {
+        let result_a = resolve_asset_resource_key("assets/./bg.png").expect("must resolve");
+        assert_eq!(result_a, "assets/bg.png");
+
+        let result_b = resolve_asset_resource_key("assets/foo/../bg.png").expect("must resolve");
+        assert_eq!(result_b, "assets/bg.png");
+    }
+
+    #[test]
+    fn resolve_asset_resource_key_normalizes_windows_separators() {
+        let result = resolve_asset_resource_key("assets\\bg.png").expect("must resolve");
+        assert_eq!(result, "assets/bg.png");
+    }
+
+    #[test]
+    fn resolve_asset_resource_key_rejects_traversal() {
+        assert!(resolve_asset_resource_key("../bg.png").is_err());
+        assert!(resolve_asset_resource_key("assets/../../bg.png").is_err());
+    }
+
+    #[test]
+    fn parse_say_slides_from_ast_tracks_background_from_asset_commands() {
+        let ast = json!([
+          {"op":"asset","args":{"type":"bg","src":"bg_a.png"}},
+          {"op":"say","args":{"text":"Hello"}},
+          {"op":"asset","args":{"type":"bg","src":"assets/./bg_b.jpg"}},
+          {"op":"say","args":{"text":"World"}},
+          {"op":"asset","args":{"type":"fg","src":"fg.png"}},
+          {"op":"say","args":{"text":"Again"}}
+        ]);
+
+        let slides = parse_say_slides_from_ast(&ast).expect("ast must parse");
+        assert_eq!(slides.len(), 3);
+        assert_eq!(slides[0].text, "Hello");
+        assert_eq!(slides[0].background.as_deref(), Some("assets/bg_a.png"));
+        assert_eq!(slides[1].text, "World");
+        assert_eq!(slides[1].background.as_deref(), Some("assets/bg_b.jpg"));
+        assert_eq!(slides[2].text, "Again");
+        assert_eq!(slides[2].background.as_deref(), Some("assets/bg_b.jpg"));
+    }
+
+    #[test]
+    fn read_checked_resource_bytes_accepts_small_file() {
+        let path = unique_temp_path("fcore-small");
+        let mut file = File::create(&path).expect("create temp file");
+        file.write_all(b"ok").expect("write temp file");
+        drop(file);
+
+        let result = read_checked_resource_bytes(&path);
+        let _ = fs::remove_file(&path);
+
+        let bytes = result.expect("small file should pass");
+        assert_eq!(bytes, b"ok");
+    }
+
+    #[test]
+    fn read_checked_resource_bytes_rejects_oversized_file() {
+        let path = unique_temp_path("fcore-large");
+        let file = File::create(&path).expect("create temp file");
+        file.set_len(MAX_MEDIA_FILE_BYTES + 1)
+            .expect("set oversized length");
+        drop(file);
+
+        let result = read_checked_resource_bytes(&path);
+        let _ = fs::remove_file(&path);
+
+        assert!(result.is_err());
+    }
+
+    fn unique_temp_path(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{}-{nanos}.bin", std::process::id()))
+    }
 }

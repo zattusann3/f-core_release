@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:1420 http://localhost:1420 ws://127.0.0.1:1420 ws://localhost:1420; frame-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; img-src * data: blob: asset: tauri: http://localhost:* http://127.0.0.1:*; media-src * data: blob: asset: tauri: http://localhost:* http://127.0.0.1:*; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*;"
     }
   },
   "bundle": {

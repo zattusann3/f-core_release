@@ -156,7 +156,7 @@ function sendRenderCommands(
 ): void {
   frame.contentWindow?.postMessage(
     { type: "fcore.renderCommands", renderCommands },
-    "*",
+    window.location.origin,
   );
 }
 
@@ -185,5 +185,5 @@ function isTrustedRendererEvent(
   if (!frameWindow || event.source !== frameWindow) {
     return false;
   }
-  return event.origin === window.location.origin || event.origin === "null";
+  return event.origin === window.location.origin;
 }

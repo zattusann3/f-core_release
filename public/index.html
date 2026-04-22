@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src * data: blob: asset: tauri: http://localhost:* http://127.0.0.1:*; media-src * data: blob: asset: tauri: http://localhost:* http://127.0.0.1:*; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*;"
+    />
     <title>f-core Inspector</title>
     <style>
       :root {
@@ -110,7 +114,7 @@
         <iframe
           id="renderer-frame"
           src="/renderer.html"
-          sandbox="allow-scripts"
+          sandbox="allow-scripts allow-same-origin"
         ></iframe>
       </section>
     </div>
