@@ -11,10 +11,12 @@ const session = new ScenarioSession(workerHost, {
   loadPluginSource: loadBundledPluginSource,
 });
 let cachedMarkdown: string | null = null;
+const MAX_AUTO_FORWARD_STEPS = 4096;
 
 const jsonViewer = document.getElementById("json-viewer");
 const saveDataInput = document.getElementById("save-data");
 const rendererFrame = document.getElementById("renderer-frame");
+const exportPptxButton = document.getElementById("export-pptx");
 
 if (
   !(jsonViewer instanceof HTMLPreElement) ||
@@ -24,15 +26,20 @@ if (
   throw new Error("operation rejected");
 }
 
+if (exportPptxButton instanceof HTMLElement && !isTauriRuntime()) {
+  exportPptxButton.style.display = "none";
+}
+
 window.addEventListener("message", async (event) => {
   if (!isTrustedRendererEvent(event, rendererFrame)) return;
-  if (!isInputMessage(event.data)) return;
+  const inputValue = parseInputValue(event.data);
+  if (inputValue === undefined) return;
 
   try {
-    session.provideInput(event.data.value);
-    const renderCommands = await session.step();
+    resumeSession(inputValue);
+    const renderCommands = await stepUntilRenderable();
     const output = {
-      input: event.data.value,
+      input: inputValue,
       done: renderCommands === null,
       renderCommands: renderCommands ?? [],
       currentLabel: session.currentLabel,
@@ -57,7 +64,7 @@ document.getElementById("session-start")?.addEventListener("click", () => {
         { type: "ClearSubtree", targetId: "fc-text-layer" },
       ]);
 
-      const firstStepCommands = await session.step();
+      const firstStepCommands = await stepUntilRenderable();
       const payload = {
         started: true,
         done: firstStepCommands === null,
@@ -76,7 +83,7 @@ document.getElementById("session-start")?.addEventListener("click", () => {
 
 document.getElementById("session-step")?.addEventListener("click", async () => {
   try {
-    const renderCommands = await session.step();
+    const renderCommands = await stepUntilRenderable();
     const output = {
       done: renderCommands === null,
       renderCommands: renderCommands ?? [],
@@ -103,10 +110,13 @@ document.getElementById("session-save")?.addEventListener("click", () => {
 document.getElementById("session-load")?.addEventListener("click", () => {
   try {
     session.importSaveData(saveDataInput.value);
+    const syncCommands = buildRenderSyncCommands(session.runtimeState.vars);
+    sendRenderCommands(rendererFrame, syncCommands);
     renderJson(jsonViewer, {
       loaded: true,
       currentLabel: session.currentLabel,
       currentIndex: session.currentIndex,
+      renderCommands: syncCommands,
     });
   } catch {
     renderJson(jsonViewer, { error: "operation rejected" });
@@ -116,6 +126,10 @@ document.getElementById("session-load")?.addEventListener("click", () => {
 document.getElementById("export-pptx")?.addEventListener("click", () => {
   void (async () => {
     try {
+      if (!isTauriRuntime()) {
+        renderJson(jsonViewer, { error: "operation rejected" });
+        return;
+      }
       const markdown = await ensureScenarioMarkdown();
       const ast = parseScenario(markdown) as Record<string, CommandIR[]>;
       const flatCommands = Object.values(ast).flat();
@@ -135,11 +149,19 @@ window.addEventListener("beforeunload", () => {
 });
 
 async function loadScenarioMarkdown(): Promise<string> {
-  try {
-    return await invoke<string>("load_scenario", { path: "demo" });
-  } catch {
+  if (isTauriRuntime()) {
+    try {
+      return await invoke<string>("load_scenario", { path: "demo" });
+    } catch {
+      throw new Error("operation rejected");
+    }
+  }
+
+  const response = await fetch("/assets/demo_scenario.md");
+  if (!response.ok) {
     throw new Error("operation rejected");
   }
+  return await response.text();
 }
 
 async function ensureScenarioMarkdown(): Promise<string> {
@@ -150,13 +172,50 @@ async function ensureScenarioMarkdown(): Promise<string> {
   return cachedMarkdown;
 }
 
+async function stepUntilRenderable(): Promise<RenderCommand[] | null> {
+  let attempts = 0;
+  const accumulatedCommands: RenderCommand[] = [];
+
+  while (true) {
+    const stepCommands = await session.step();
+    if (stepCommands === null) {
+      return accumulatedCommands.length > 0 ? accumulatedCommands : null;
+    }
+
+    if (stepCommands.length > 0) {
+      accumulatedCommands.push(...stepCommands);
+    }
+
+    if (hasBlockingRenderCommands(stepCommands)) {
+      return accumulatedCommands;
+    }
+
+    attempts += 1;
+    if (attempts >= MAX_AUTO_FORWARD_STEPS) {
+      throw new Error("operation rejected");
+    }
+  }
+}
+
+function hasBlockingRenderCommands(commands: ReadonlyArray<RenderCommand>): boolean {
+  return commands.some((command) => {
+    if (command.type !== "AppendNode") {
+      return false;
+    }
+    if (command.parentId !== "fc-text-layer" && command.parentId !== "fc-menu-layer") {
+      return false;
+    }
+    return command.tag === "span" || command.tag === "button" || command.tag === "p";
+  });
+}
+
 function sendRenderCommands(
   frame: HTMLIFrameElement,
   renderCommands: ReadonlyArray<RenderCommand>,
 ): void {
   frame.contentWindow?.postMessage(
     { type: "fcore.renderCommands", renderCommands },
-    window.location.origin,
+    "*",
   );
 }
 
@@ -164,17 +223,33 @@ function renderJson(target: HTMLPreElement, data: unknown): void {
   target.textContent = JSON.stringify(data, null, 2);
 }
 
-function isInputMessage(value: unknown): value is { type: "fcore.input"; value: VarValue } {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+function parseInputValue(value: unknown): VarValue | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
   const record = value as Record<string, unknown>;
-  if (record["type"] !== "fcore.input") return false;
-  const input = record["value"];
+  if (record["type"] === "fcore.input") {
+    const input = record["value"];
+    return isVarValue(input) ? input : undefined;
+  }
+  if (record["type"] === "menu_input") {
+    const input = record["inputId"];
+    return isVarValue(input) ? input : undefined;
+  }
+  return undefined;
+}
+
+function isVarValue(input: unknown): input is VarValue {
   return (
     input === null ||
     typeof input === "string" ||
     typeof input === "number" ||
     typeof input === "boolean"
   );
+}
+
+function resumeSession(inputValue: VarValue): void {
+  session.provideInput(inputValue);
 }
 
 function isTrustedRendererEvent(
@@ -185,5 +260,88 @@ function isTrustedRendererEvent(
   if (!frameWindow || event.source !== frameWindow) {
     return false;
   }
-  return event.origin === window.location.origin;
+  return event.origin === window.location.origin || event.origin === "null";
+}
+
+function isTauriRuntime(): boolean {
+  const value = globalThis as typeof globalThis & { __TAURI_IPC__?: unknown };
+  return typeof value.__TAURI_IPC__ === "function";
+}
+
+function buildRenderSyncCommands(
+  vars: Readonly<Record<string, VarValue>>,
+): RenderCommand[] {
+  const commands: RenderCommand[] = [
+    { type: "ClearSubtree", targetId: "fc-bg-layer" },
+    { type: "ClearSubtree", targetId: "fc-fg-layer" },
+    { type: "ClearSubtree", targetId: "fc-text-layer" },
+  ];
+
+  const bgSrc = readAssetSrc(vars, ["current_bg", "last_bg_asset"]);
+  if (bgSrc !== null) {
+    commands.push({
+      type: "AppendNode",
+      parentId: "fc-bg-layer",
+      nodeId: "fc-bg-restored",
+      tag: "img",
+      src: bgSrc,
+    });
+  }
+
+  const fgSrc = readAssetSrc(vars, ["current_fg", "last_fg_asset"]);
+  if (fgSrc !== null) {
+    commands.push({
+      type: "AppendNode",
+      parentId: "fc-fg-layer",
+      nodeId: "fc-fg-restored",
+      tag: "img",
+      src: fgSrc,
+    });
+  }
+
+  const lastSay = vars["last_say"];
+  if (typeof lastSay === "string" && lastSay.trim().length > 0) {
+    commands.push({
+      type: "AppendNode",
+      parentId: "fc-text-layer",
+      nodeId: "fc-say-restored",
+      tag: "span",
+      text: lastSay,
+    });
+  }
+
+  return commands;
+}
+
+function readAssetSrc(
+  vars: Readonly<Record<string, VarValue>>,
+  keys: string[],
+): string | null {
+  for (const key of keys) {
+    const value = vars[key];
+    if (typeof value === "string" && isSafeAssetFileName(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function isSafeAssetFileName(value: string): boolean {
+  if (!/^[A-Za-z0-9._-]{1,128}$/.test(value)) {
+    return false;
+  }
+  const lower = value.toLowerCase();
+  const dotIndex = lower.lastIndexOf(".");
+  if (dotIndex <= 0) {
+    return false;
+  }
+  const ext = lower.slice(dotIndex);
+  return (
+    ext === ".png" ||
+    ext === ".jpg" ||
+    ext === ".jpeg" ||
+    ext === ".webp" ||
+    ext === ".svg" ||
+    ext === ".gif"
+  );
 }
