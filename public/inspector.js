@@ -61,7 +61,7 @@ document.getElementById("session-load")?.addEventListener("click", async () => {
 function sendRenderCommands(renderCommands) {
   rendererFrame.contentWindow?.postMessage(
     { type: "fcore.renderCommands", renderCommands },
-    window.location.origin,
+    "*",
   );
 }
 
@@ -87,5 +87,5 @@ function isTrustedRendererEvent(event, frame) {
   if (!frameWindow || event.source !== frameWindow) {
     return false;
   }
-  return event.origin === window.location.origin;
+  return event.origin === window.location.origin || event.origin === "null";
 }

@@ -31,6 +31,9 @@ export function applyRenderCommands(commands) {
 function appendNode(command) {
   const parent = document.getElementById(command.parentId);
   if (!parent) return;
+  if (command.parentId === "fc-text-layer" && command.tag === "span") {
+    parent.replaceChildren();
+  }
 
   const node = document.createElement(command.tag);
   node.id = command.nodeId;
@@ -42,7 +45,7 @@ function appendNode(command) {
     node.onclick = () => {
       window.parent.postMessage(
         { type: "fcore.input", value: command.onClickInput },
-        window.location.origin,
+        "*",
       );
     };
   }
