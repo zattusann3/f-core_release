@@ -11,8 +11,12 @@ pnpm-debug.log*
 .env.*
 .envrc
 .direnv/
+repo-context*.md
+repo-context*.txt
 
 assets/*
 !assets/demo_scenario.md
 public/assets/*
 !public/assets/.gitkeep
+!public/assets/demo_scenario.md
+!public/assets/sample.jpg

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { loadBundledPluginSource } from "./browser_plugin_sources.ts";
 import { parseScenario } from "./parser.ts";
 import type { CommandIR } from "./runtime.ts";
@@ -6,12 +7,18 @@ import { ScenarioSession } from "./session.ts";
 import { WorkerHost } from "./worker_host.ts";
 import type { RenderCommand, VarValue } from "./types.ts";
 
+interface ScenarioChangedPayload {
+  path?: unknown;
+}
+
 const workerHost = new WorkerHost();
 const session = new ScenarioSession(workerHost, {
   loadPluginSource: loadBundledPluginSource,
 });
 let cachedMarkdown: string | null = null;
+let scenarioChangeUnlisten: (() => void) | null = null;
 const MAX_AUTO_FORWARD_STEPS = 4096;
+const ACTIVE_SCENARIO_FILE_NAME = "demo_scenario.md";
 
 const jsonViewer = document.getElementById("json-viewer");
 const saveDataInput = document.getElementById("save-data");
@@ -29,6 +36,8 @@ if (
 if (exportPptxButton instanceof HTMLElement && !isTauriRuntime()) {
   exportPptxButton.style.display = "none";
 }
+
+void setupScenarioChangeListener();
 
 window.addEventListener("message", async (event) => {
   if (!isTrustedRendererEvent(event, rendererFrame)) return;
@@ -57,14 +66,8 @@ document.getElementById("session-start")?.addEventListener("click", () => {
     try {
       const markdown = await ensureScenarioMarkdown();
       const scenario = parseScenario(markdown);
-      session.loadScenario(scenario, "start");
-      sendRenderCommands(rendererFrame, [
-        { type: "ClearSubtree", targetId: "fc-bg-layer" },
-        { type: "ClearSubtree", targetId: "fc-fg-layer" },
-        { type: "ClearSubtree", targetId: "fc-text-layer" },
-      ]);
+      const firstStepCommands = await restartScenario(scenario, "start");
 
-      const firstStepCommands = await stepUntilRenderable();
       const payload = {
         started: true,
         done: firstStepCommands === null,
@@ -111,12 +114,17 @@ document.getElementById("session-load")?.addEventListener("click", () => {
   try {
     session.importSaveData(saveDataInput.value);
     const syncCommands = buildRenderSyncCommands(session.runtimeState.vars);
-    sendRenderCommands(rendererFrame, syncCommands);
+    const suspendedCommands = session.getSuspendedRenderCommands();
+    const restoreCommands = suspendedCommands === null
+      ? syncCommands
+      : [...syncCommands, ...suspendedCommands];
+    sendRenderCommands(rendererFrame, restoreCommands);
     renderJson(jsonViewer, {
       loaded: true,
       currentLabel: session.currentLabel,
       currentIndex: session.currentIndex,
-      renderCommands: syncCommands,
+      suspendedRestored: suspendedCommands !== null,
+      renderCommands: restoreCommands,
     });
   } catch {
     renderJson(jsonViewer, { error: "operation rejected" });
@@ -145,8 +153,61 @@ document.getElementById("export-pptx")?.addEventListener("click", () => {
 });
 
 window.addEventListener("beforeunload", () => {
+  scenarioChangeUnlisten?.();
   session.close();
 });
+
+async function setupScenarioChangeListener(): Promise<void> {
+  if (!isTauriRuntime()) {
+    return;
+  }
+  try {
+    scenarioChangeUnlisten = await listen<ScenarioChangedPayload>(
+      "scenario-changed",
+      (event) => {
+        console.log("[HMR] Event received:", event.payload);
+        void reloadScenarioAfterChange(event.payload);
+      },
+    );
+  } catch {
+    renderJson(jsonViewer, { error: "operation rejected" });
+  }
+}
+
+async function reloadScenarioAfterChange(
+  payload: ScenarioChangedPayload,
+): Promise<void> {
+  const changedFileName = normalizeChangedPath(payload.path);
+  console.log("[HMR] Normalized file name:", changedFileName);
+  if (changedFileName !== ACTIVE_SCENARIO_FILE_NAME) {
+    console.warn("[HMR] Ignored unrelated file change.");
+    return;
+  }
+
+  cachedMarkdown = null;
+  try {
+    const markdown = await ensureScenarioMarkdown();
+    const scenario = parseScenario(markdown);
+    const nextStartLabel = chooseReloadStartLabel(scenario);
+    console.log("[HMR] Reloading scenario and updating renderer...");
+    const renderCommands = await restartScenario(scenario, nextStartLabel);
+    const output = {
+      scenarioChanged: true,
+      path: normalizeChangedPath(payload.path),
+      reloaded: true,
+      done: renderCommands === null,
+      renderCommands: renderCommands ?? [],
+      currentLabel: session.currentLabel,
+      currentIndex: session.currentIndex,
+      labels: Object.keys(scenario),
+    };
+    console.log("[HMR] Sending render commands after reload...");
+    renderJson(jsonViewer, output);
+    sendRenderCommands(rendererFrame, output.renderCommands);
+  } catch {
+    renderJson(jsonViewer, { scenarioChanged: true, error: "operation rejected" });
+  }
+}
 
 async function loadScenarioMarkdown(): Promise<string> {
   if (isTauriRuntime()) {
@@ -172,6 +233,30 @@ async function ensureScenarioMarkdown(): Promise<string> {
   return cachedMarkdown;
 }
 
+async function restartScenario(
+  scenario: Record<string, CommandIR[]>,
+  startLabel: string,
+): Promise<RenderCommand[] | null> {
+  await session.loadScenario(scenario, startLabel);
+  sendRenderCommands(rendererFrame, clearRendererCommands());
+  return await stepUntilRenderable();
+}
+
+function clearRendererCommands(): RenderCommand[] {
+  return [
+    { type: "ClearSubtree", targetId: "fc-bg-layer" },
+    { type: "ClearSubtree", targetId: "fc-fg-layer" },
+    { type: "ClearSubtree", targetId: "fc-text-layer" },
+  ];
+}
+
+function chooseReloadStartLabel(scenario: Record<string, CommandIR[]>): string {
+  if (session.currentLabel !== null && session.currentLabel in scenario) {
+    return session.currentLabel;
+  }
+  return "start";
+}
+
 async function stepUntilRenderable(): Promise<RenderCommand[] | null> {
   let attempts = 0;
   const accumulatedCommands: RenderCommand[] = [];
@@ -191,7 +276,7 @@ async function stepUntilRenderable(): Promise<RenderCommand[] | null> {
     }
 
     attempts += 1;
-    if (attempts >= MAX_AUTO_FORWARD_STEPS) {
+    if (attempts > MAX_AUTO_FORWARD_STEPS) {
       throw new Error("operation rejected");
     }
   }
@@ -264,8 +349,19 @@ function isTrustedRendererEvent(
 }
 
 function isTauriRuntime(): boolean {
-  const value = globalThis as typeof globalThis & { __TAURI_IPC__?: unknown };
-  return typeof value.__TAURI_IPC__ === "function";
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function normalizeChangedPath(path: unknown): string | null {
+  if (typeof path !== "string" || path.trim().length === 0) {
+    return null;
+  }
+  const normalized = path.trim().replace(/\\/g, "/");
+  const fileName = normalized.split("/").pop();
+  if (!fileName || fileName.length === 0) {
+    return null;
+  }
+  return fileName;
 }
 
 function buildRenderSyncCommands(

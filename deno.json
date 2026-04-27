@@ -4,6 +4,8 @@
     "manifest:keygen": "deno run scripts/manifest_keygen.ts",
     "manifest:update": "deno run --allow-read --allow-write --allow-env scripts/manifest_update.ts",
     "manifest:check": "deno run --allow-read scripts/manifest_check.ts",
+    "context:gemini": "deno run --allow-read --allow-write scripts/gemini_context.ts",
+    "context:gemini:txt": "deno run --allow-read --allow-write scripts/gemini_context.ts --out repo-context.txt",
     "test": "deno test --allow-read --unstable-worker-options"
   },
   "fmt": {

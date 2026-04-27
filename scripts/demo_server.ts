@@ -12,7 +12,7 @@ const scenarioSession = new ScenarioSession(workerHost);
 
 const PUBLIC_DIR = new URL("../public/", import.meta.url);
 const SRC_DIR = new URL("../src/", import.meta.url);
-const ASSETS_DIR = new URL("../assets/", import.meta.url);
+const ASSETS_DIR = new URL("../public/assets/", import.meta.url);
 
 const DEMO_SCENARIO_MARKDOWN = `
 Session comments are ignored.
@@ -114,7 +114,7 @@ async function handleSessionStart(request: Request): Promise<Response> {
 
   try {
     const scenario = parseScenario(DEMO_SCENARIO_MARKDOWN);
-    scenarioSession.loadScenario(scenario, "start");
+    await scenarioSession.loadScenario(scenario, "start");
     return jsonResponse({
       started: true,
       currentLabel: scenarioSession.currentLabel,

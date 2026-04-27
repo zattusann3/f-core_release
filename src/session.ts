@@ -1,6 +1,8 @@
 import type { RuntimeState } from "./context.ts";
 import {
   jsonByteLength,
+  MAX_RENDER_COMMANDS_BYTES,
+  MAX_RENDER_COMMANDS_ENTRIES,
   MAX_VARS_BYTES,
   MAX_VARS_ENTRIES,
   textByteLength,
@@ -15,6 +17,18 @@ const RESERVED_VAR_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_SAVE_DATA_BYTES = 64 * 1024;
 const MAX_SCENARIO_LABELS = 1024;
 const MAX_COMMANDS_PER_LABEL = 4096;
+const DOM_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+const CSS_VAR_KEY_RE = /^--fc-[A-Za-z0-9_-]+$/;
+const RENDER_ASSET_SRC_RE = /^[A-Za-z0-9._-]{1,128}$/;
+const RENDER_ASSET_ALLOWED_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".svg",
+  ".gif",
+]);
+const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/;
 
 export class ScenarioSession {
   scenario: Record<string, CommandIR[]> = {};
@@ -24,22 +38,29 @@ export class ScenarioSession {
   private readonly workerHost: WorkerHost;
   private readonly executeOptions: ExecuteOptions;
   private readonly stepMutex = createAsyncMutex();
+  private suspendedRenderCommands: RenderCommand[] | null = null;
 
   constructor(workerHost = new WorkerHost(), executeOptions: ExecuteOptions = {}) {
     this.workerHost = workerHost;
     this.executeOptions = executeOptions;
   }
 
-  loadScenario(scenario: Record<string, CommandIR[]>, startLabel: string): void {
-    const normalizedScenario = normalizeScenario(scenario);
-    if (!LABEL_NAME_RE.test(startLabel) || !(startLabel in normalizedScenario)) {
-      throw new Error("invalid scenario");
-    }
+  async loadScenario(scenario: Record<string, CommandIR[]>, startLabel: string): Promise<void> {
+    const release = await this.stepMutex.acquire();
+    try {
+      const normalizedScenario = normalizeScenario(scenario);
+      if (!LABEL_NAME_RE.test(startLabel) || !(startLabel in normalizedScenario)) {
+        throw new Error("invalid scenario");
+      }
 
-    this.scenario = normalizedScenario;
-    this.runtimeState = { vars: { _last_input: null } };
-    this.currentLabel = startLabel;
-    this.currentIndex = 0;
+      this.scenario = normalizedScenario;
+      this.runtimeState = { vars: { _last_input: null } };
+      this.currentLabel = startLabel;
+      this.currentIndex = 0;
+      this.suspendedRenderCommands = null;
+    } finally {
+      release();
+    }
   }
 
   async step(): Promise<RenderCommand[] | null> {
@@ -67,6 +88,7 @@ export class ScenarioSession {
       );
       try {
         if (!result.suspended) {
+          this.suspendedRenderCommands = null;
           if (result.jumpTo !== null) {
             if (!(result.jumpTo in this.scenario)) {
               throw new Error("invalid session state");
@@ -76,6 +98,8 @@ export class ScenarioSession {
           } else if (result.requestedNext) {
             this.currentIndex += 1;
           }
+        } else {
+          this.suspendedRenderCommands = [...result.renderCommands];
         }
         return [...result.renderCommands];
       } finally {
@@ -97,6 +121,13 @@ export class ScenarioSession {
     this.workerHost.close();
   }
 
+  getSuspendedRenderCommands(): RenderCommand[] | null {
+    if (this.suspendedRenderCommands === null) {
+      return null;
+    }
+    return [...this.suspendedRenderCommands];
+  }
+
   exportSaveData(): string {
     if (this.currentLabel === null) {
       throw new Error("session not started");
@@ -106,6 +137,7 @@ export class ScenarioSession {
       currentLabel: this.currentLabel,
       currentIndex: this.currentIndex,
       vars: { ...this.runtimeState.vars },
+      suspendedRenderCommands: this.getSuspendedRenderCommands(),
     };
 
     return JSON.stringify(payload);
@@ -130,6 +162,9 @@ export class ScenarioSession {
     this.runtimeState = { vars: { ...saveData.vars, _last_input: null } };
     this.currentLabel = saveData.currentLabel;
     this.currentIndex = saveData.currentIndex;
+    this.suspendedRenderCommands = saveData.suspendedRenderCommands === null
+      ? null
+      : [...saveData.suspendedRenderCommands];
   }
 }
 
@@ -137,6 +172,7 @@ interface SaveData {
   currentLabel: string | null;
   currentIndex: number;
   vars: Record<string, VarValue>;
+  suspendedRenderCommands: RenderCommand[] | null;
 }
 
 function normalizeScenario(input: Record<string, CommandIR[]>): Record<string, CommandIR[]> {
@@ -192,6 +228,7 @@ function validateSaveData(
   const currentLabel = value["currentLabel"];
   const currentIndex = value["currentIndex"];
   const vars = value["vars"];
+  const suspendedRenderCommands = value["suspendedRenderCommands"];
 
   if (
     !(currentLabel === null ||
@@ -211,6 +248,9 @@ function validateSaveData(
   if (safeJsonByteLength(validatedVars) > MAX_VARS_BYTES) {
     throw new Error("invalid save data");
   }
+  const validatedSuspendedRenderCommands = validateSuspendedRenderCommands(
+    suspendedRenderCommands,
+  );
 
   if (currentLabel === null) {
     if (normalizedIndex !== 0) {
@@ -227,6 +267,7 @@ function validateSaveData(
     currentLabel,
     currentIndex: normalizedIndex,
     vars: validatedVars,
+    suspendedRenderCommands: validatedSuspendedRenderCommands,
   };
 }
 
@@ -261,6 +302,131 @@ function validateVars(value: unknown): Record<string, VarValue> {
     vars[name] = raw;
   }
   return vars;
+}
+
+function validateSuspendedRenderCommands(value: unknown): RenderCommand[] | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("invalid save data");
+  }
+  if (value.length > MAX_RENDER_COMMANDS_ENTRIES) {
+    throw new Error("invalid save data");
+  }
+
+  const validated = value.map((entry) => validateRenderCommand(entry));
+  if (safeJsonByteLength(validated) > MAX_RENDER_COMMANDS_BYTES) {
+    throw new Error("invalid save data");
+  }
+  return validated;
+}
+
+function validateRenderCommand(value: unknown): RenderCommand {
+  if (!isPlainRecord(value)) {
+    throw new Error("invalid save data");
+  }
+  const type = value["type"];
+  if (type === "ClearSubtree") {
+    const targetId = validateDomId(value["targetId"]);
+    return { type, targetId };
+  }
+  if (type === "UpdateCSSVar") {
+    const targetId = validateDomId(value["targetId"]);
+    const vars = validateCssVars(value["vars"]);
+    return { type, targetId, vars };
+  }
+  if (type === "AppendNode") {
+    const parentId = validateDomId(value["parentId"]);
+    const nodeId = validateDomId(value["nodeId"]);
+    const tag = validateSafeTag(value["tag"]);
+    const command: RenderCommand = { type, parentId, nodeId, tag };
+
+    if ("text" in value) {
+      const text = value["text"];
+      if (typeof text !== "string") throw new Error("invalid save data");
+      command.text = text;
+    }
+    if ("src" in value) {
+      command.src = validateRenderAssetSrc(value["src"]);
+    }
+    if ("onClickInput" in value) {
+      const onClickInput = value["onClickInput"];
+      if (!(typeof onClickInput === "string" || typeof onClickInput === "number")) {
+        throw new Error("invalid save data");
+      }
+      command.onClickInput = onClickInput;
+    }
+    if ("cssVars" in value) {
+      command.cssVars = validateCssVars(value["cssVars"]);
+    }
+    return command;
+  }
+  throw new Error("invalid save data");
+}
+
+function validateDomId(value: unknown): string {
+  if (typeof value !== "string" || !DOM_ID_RE.test(value)) {
+    throw new Error("invalid save data");
+  }
+  return value;
+}
+
+function validateSafeTag(value: unknown): "div" | "span" | "img" | "p" | "button" {
+  if (
+    value === "div" || value === "span" || value === "img" || value === "p" ||
+    value === "button"
+  ) {
+    return value;
+  }
+  throw new Error("invalid save data");
+}
+
+function validateCssVars(value: unknown): Record<`--fc-${string}`, string | number> {
+  if (!isPlainRecord(value)) {
+    throw new Error("invalid save data");
+  }
+  const vars: Record<`--fc-${string}`, string | number> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!CSS_VAR_KEY_RE.test(key)) {
+      throw new Error("invalid save data");
+    }
+    if (!(typeof raw === "string" || typeof raw === "number")) {
+      throw new Error("invalid save data");
+    }
+    vars[key as `--fc-${string}`] = raw;
+  }
+  return vars;
+}
+
+function validateRenderAssetSrc(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("invalid save data");
+  }
+
+  const src = value.trim();
+  if (
+    src.length === 0 ||
+    CONTROL_CHAR_RE.test(src) ||
+    !RENDER_ASSET_SRC_RE.test(src) ||
+    src.includes("..") ||
+    src.includes("/") ||
+    src.includes("\\")
+  ) {
+    throw new Error("invalid save data");
+  }
+
+  const lower = src.toLowerCase();
+  const dotIndex = lower.lastIndexOf(".");
+  if (dotIndex <= 0) {
+    throw new Error("invalid save data");
+  }
+  const ext = lower.slice(dotIndex);
+  if (!RENDER_ASSET_ALLOWED_EXTENSIONS.has(ext)) {
+    throw new Error("invalid save data");
+  }
+
+  return src;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

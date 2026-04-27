@@ -110,6 +110,9 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
 
 ## Available Commands / 利用可能コマンド
 
+- EN: For shell commands used by humans, see [`docs/COMMAND_CHEATSHEET.md`](./docs/COMMAND_CHEATSHEET.md).
+- JA: 人間が端末で実行するコマンドは [`docs/COMMAND_CHEATSHEET.md`](./docs/COMMAND_CHEATSHEET.md) を参照してください。
+
 - EN: See detailed command specs in [`docs/COMMANDS.md`](./docs/COMMANDS.md).
 - JA: コマンドの詳細仕様は [`docs/COMMANDS.md`](./docs/COMMANDS.md) を参照してください。
 
@@ -162,6 +165,7 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
 - JA: セキュリティ設計判断はADRに記録しています。
 
 - [`adr/ADR-F-CORE20260403-CORE-20260413-01-secure-plugin-runtime-boundary.md`](./adr/ADR-F-CORE20260403-CORE-20260413-01-secure-plugin-runtime-boundary.md)
+- [`adr/ADR-F-CORE20260403-CORE-20260427-02-fail-fast-explicit-error-model.md`](./adr/ADR-F-CORE20260403-CORE-20260427-02-fail-fast-explicit-error-model.md)
 
 ## Known Concerns / 既知の懸念
 

@@ -1,13 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use notify::RecursiveMode;
+use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use serde_json::Value;
 use std::{
     collections::{BTreeSet, HashMap},
     fs::{self, File},
     io::{Seek, Write},
     path::{Component, PathBuf},
+    sync::mpsc,
+    thread,
+    time::Duration,
 };
-use tauri::{path::BaseDirectory, AppHandle, Manager, Window};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, Window};
 use tauri_plugin_dialog::DialogExt;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
@@ -29,6 +34,11 @@ struct MediaAsset {
     file_name: String,
     extension: String,
     bytes: Vec<u8>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct ScenarioChangedPayload {
+    path: String,
 }
 
 #[tauri::command]
@@ -61,37 +71,196 @@ async fn export_pptx(window: Window, ast: Value) -> Result<String, String> {
 
 fn read_scenario_resource(app: &AppHandle, path: Option<&str>) -> Result<String, String> {
     let resource_key = resolve_scenario_resource_key(path)?;
-    let resource_path = app
-        .path()
-        .resolve(&resource_key, BaseDirectory::Resource)
-        .map_err(|err| {
-            eprintln!(
-                "[Engine Internal] load_scenario resolve failed key='{}': {}",
-                resource_key, err
-            );
-            "operation rejected".to_string()
-        })?;
-
-    match fs::read_to_string(&resource_path) {
-        Ok(content) => Ok(content),
-        Err(primary_err) => {
-            // tauri dev may stage resources under target/debug/_up_/...
-            let fallback_path = app
-                .path()
-                .resolve(format!("_up_/{resource_key}"), BaseDirectory::Resource)
-                .map_err(|_| "operation rejected".to_string())?;
-            fs::read_to_string(&fallback_path).map_err(|fallback_err| {
+    for candidate in resource_key_candidates(&resource_key) {
+        if let Some(dev_path) = resolve_dev_resource_path(&candidate).filter(|path| path.is_file())
+        {
+            return fs::read_to_string(&dev_path).map_err(|err| {
                 eprintln!(
-                    "[Engine Internal] load_scenario failed path='{}': {}; fallback='{}': {}",
-                    resource_path.display(),
-                    primary_err,
-                    fallback_path.display(),
-                    fallback_err
+                    "[Engine Internal] load_scenario dev resource failed path='{}': {}",
+                    dev_path.display(),
+                    err
                 );
                 "operation rejected".to_string()
-            })
+            });
         }
     }
+
+    let mut failures: Vec<String> = Vec::new();
+    for resource_path in resolve_resource_paths(app, &resource_key) {
+        match fs::read_to_string(&resource_path) {
+            Ok(content) => return Ok(content),
+            Err(err) => failures.push(format!("{}: {}", resource_path.display(), err)),
+        }
+    }
+
+    eprintln!(
+        "[Engine Internal] load_scenario failed key='{}' attempts={:?}",
+        resource_key, failures
+    );
+    Err("operation rejected".to_string())
+}
+
+fn resource_key_candidates(resource_key: &str) -> Vec<String> {
+    let normalized = resource_key.trim_start_matches('/').replace('\\', "/");
+    let mut keys: Vec<String> = Vec::new();
+    let mut push_unique = |value: String| {
+        if !value.is_empty() && !keys.iter().any(|existing| existing == &value) {
+            keys.push(value);
+        }
+    };
+
+    if normalized.starts_with("public/assets/") {
+        push_unique(normalized.clone());
+        push_unique(normalized.trim_start_matches("public/").to_string());
+    } else if normalized.starts_with("assets/") {
+        push_unique(format!("public/{normalized}"));
+        push_unique(normalized.clone());
+    } else {
+        push_unique(format!("public/assets/{normalized}"));
+        push_unique(format!("assets/{normalized}"));
+        push_unique(normalized);
+    }
+
+    keys
+}
+
+fn resolve_resource_paths(app: &AppHandle, resource_key: &str) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for key in resource_key_candidates(resource_key) {
+        for resolved_key in [key.clone(), format!("_up_/{key}")] {
+            let Ok(path) = app.path().resolve(&resolved_key, BaseDirectory::Resource) else {
+                continue;
+            };
+            if !paths.iter().any(|existing| existing == &path) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+fn resolve_scenario_watch_dirs(app: &AppHandle) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for dev_key in ["public/assets", "assets"] {
+        if let Some(dev_assets_dir) =
+            resolve_dev_resource_path(dev_key).filter(|path| path.is_dir())
+        {
+            if !dirs.iter().any(|entry| entry == &dev_assets_dir) {
+                dirs.push(dev_assets_dir);
+            }
+        }
+    }
+    for key in [
+        "public/assets",
+        "_up_/public/assets",
+        "assets",
+        "_up_/assets",
+    ] {
+        let Ok(path) = app.path().resolve(key, BaseDirectory::Resource) else {
+            continue;
+        };
+        if path.is_dir() && !dirs.iter().any(|entry| entry == &path) {
+            dirs.push(path);
+        }
+    }
+    dirs
+}
+
+fn is_markdown_change_event(path: &PathBuf, _kind: DebouncedEventKind) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case("md"))
+        .unwrap_or(false)
+}
+
+fn start_scenario_watcher(app: AppHandle) {
+    let watch_dirs = resolve_scenario_watch_dirs(&app);
+    if watch_dirs.is_empty() {
+        eprintln!("[Engine Internal] scenario watcher disabled: no watch directory");
+        return;
+    }
+
+    thread::spawn(move || {
+        let (tx, rx) = mpsc::channel();
+        let mut debouncer = match new_debouncer(Duration::from_millis(300), tx) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!("[Engine Internal] scenario watcher init failed: {err}");
+                return;
+            }
+        };
+
+        let mut watched_count = 0usize;
+        for watch_dir in &watch_dirs {
+            if let Err(err) = debouncer
+                .watcher()
+                .watch(watch_dir, RecursiveMode::NonRecursive)
+            {
+                eprintln!(
+                    "[Engine Internal] scenario watcher watch failed path='{}': {}",
+                    watch_dir.display(),
+                    err
+                );
+            } else {
+                watched_count += 1;
+            }
+        }
+        if watched_count == 0 {
+            eprintln!("[Engine Internal] scenario watcher disabled: no usable watch directory");
+            return;
+        }
+
+        for debounced in rx {
+            let events = match debounced {
+                Ok(value) => value,
+                Err(err) => {
+                    eprintln!("[Engine Internal] scenario watcher event error: {err}");
+                    continue;
+                }
+            };
+
+            for event in events {
+                #[cfg(debug_assertions)]
+                {
+                    println!(
+                        "[Engine Internal] File event: {:?} on {:?}",
+                        event.kind, event.path
+                    );
+                }
+                if !is_markdown_change_event(&event.path, event.kind) {
+                    continue;
+                }
+                let payload = ScenarioChangedPayload {
+                    path: event
+                        .path
+                        .file_name()
+                        .map(|value| value.to_string_lossy().to_string())
+                        .unwrap_or_else(|| event.path.to_string_lossy().to_string()),
+                };
+                if let Err(err) = app.emit("scenario-changed", payload) {
+                    eprintln!("[Engine Internal] scenario watcher emit failed: {err}");
+                }
+            }
+        }
+    });
+}
+
+fn resolve_dev_resource_path(resource_key: &str) -> Option<PathBuf> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let project_dir = manifest_dir.parent()?;
+    let normalized = resource_key.trim_start_matches('/');
+    let public_candidate = project_dir.join("public").join(normalized);
+    if public_candidate.exists() {
+        return Some(public_candidate);
+    }
+    let legacy_candidate = project_dir.join(normalized);
+    if legacy_candidate.exists() {
+        return Some(legacy_candidate);
+    }
+    Some(public_candidate)
 }
 
 fn resolve_scenario_resource_key(path: Option<&str>) -> Result<String, String> {
@@ -323,30 +492,33 @@ fn detect_image_extension(resource_key: &str) -> Result<String, String> {
 }
 
 fn read_resource_bytes(app: &AppHandle, resource_key: &str) -> Result<Vec<u8>, String> {
-    let resource_path = app
-        .path()
-        .resolve(resource_key, BaseDirectory::Resource)
-        .map_err(|_| "operation rejected".to_string())?;
-
-    match read_checked_resource_bytes(&resource_path) {
-        Ok(bytes) => Ok(bytes),
-        Err(primary_err) => {
-            let fallback_path = app
-                .path()
-                .resolve(format!("_up_/{resource_key}"), BaseDirectory::Resource)
-                .map_err(|_| "operation rejected".to_string())?;
-            read_checked_resource_bytes(&fallback_path).map_err(|fallback_err| {
+    for candidate in resource_key_candidates(resource_key) {
+        if let Some(dev_path) = resolve_dev_resource_path(&candidate).filter(|path| path.is_file())
+        {
+            return read_checked_resource_bytes(&dev_path).map_err(|err| {
                 eprintln!(
-                    "[Engine Internal] resource read failed path='{}': {}; fallback='{}': {}",
-                    resource_path.display(),
-                    primary_err,
-                    fallback_path.display(),
-                    fallback_err
+                    "[Engine Internal] dev resource read failed path='{}': {}",
+                    dev_path.display(),
+                    err
                 );
                 "operation rejected".to_string()
-            })
+            });
         }
     }
+
+    let mut failures: Vec<String> = Vec::new();
+    for resource_path in resolve_resource_paths(app, resource_key) {
+        match read_checked_resource_bytes(&resource_path) {
+            Ok(bytes) => return Ok(bytes),
+            Err(err) => failures.push(format!("{}: {}", resource_path.display(), err)),
+        }
+    }
+
+    eprintln!(
+        "[Engine Internal] resource read failed key='{}' attempts={:?}",
+        resource_key, failures
+    );
+    Err("operation rejected".to_string())
 }
 
 fn read_checked_resource_bytes(path: &PathBuf) -> Result<Vec<u8>, String> {
@@ -869,6 +1041,10 @@ const THEME_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            start_scenario_watcher(app.handle().clone());
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![load_scenario, export_pptx])
         .run(tauri::generate_context!())

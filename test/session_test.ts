@@ -15,7 +15,7 @@ Deno.test("ScenarioSession: step advances index and handles jump", async () => {
 
   const session = new ScenarioSession();
   try {
-    session.loadScenario(scenario, "start");
+    await session.loadScenario(scenario, "start");
 
     const firstRender = await session.step();
     assertEquals(firstRender?.length, 1);
@@ -53,13 +53,13 @@ Deno.test("ScenarioSession: save and load restore cursor and vars", async () => 
   const source = new ScenarioSession();
   let restored: ScenarioSession | null = null;
   try {
-    source.loadScenario(scenario, "start");
+    await source.loadScenario(scenario, "start");
     await source.step();
     await source.step();
     const saveData = source.exportSaveData();
 
     restored = new ScenarioSession();
-    restored.loadScenario(scenario, "start");
+    await restored.loadScenario(scenario, "start");
     restored.importSaveData(saveData);
 
     assertEquals(restored.currentLabel, "end");
@@ -96,7 +96,7 @@ Deno.test("ScenarioSession: suspend keeps PC, input resumes with jump", async ()
 
   const session = new ScenarioSession();
   try {
-    session.loadScenario(scenario, "start");
+    await session.loadScenario(scenario, "start");
 
     const first = await session.step();
     assertEquals(first?.length, 2);
@@ -117,14 +117,58 @@ Deno.test("ScenarioSession: suspend keeps PC, input resumes with jump", async ()
   }
 });
 
-Deno.test("ScenarioSession: importSaveData rejects invalid payloads", () => {
+Deno.test("ScenarioSession: save/load restores suspended render commands", async () => {
+  const scenario: Record<string, CommandIR[]> = {
+    start: [
+      {
+        op: "menu",
+        args: {
+          choices: [
+            { text: "To End", to: "end" },
+          ],
+        },
+      },
+      { op: "say", args: { text: "unreachable" } },
+    ],
+    end: [
+      { op: "say", args: { text: "done" } },
+    ],
+  };
+
+  const source = new ScenarioSession();
+  let restored: ScenarioSession | null = null;
+  try {
+    await source.loadScenario(scenario, "start");
+    const suspendedCommands = await source.step();
+    const saveData = source.exportSaveData();
+
+    restored = new ScenarioSession();
+    await restored.loadScenario(scenario, "start");
+    restored.importSaveData(saveData);
+
+    assertEquals(restored.getSuspendedRenderCommands(), suspendedCommands);
+    assertEquals(restored.currentLabel, "start");
+    assertEquals(restored.currentIndex, 0);
+
+    restored.provideInput("end");
+    const resumed = await restored.step();
+    assertEquals(resumed, []);
+    assertEquals(restored.currentLabel, "end");
+    assertEquals(restored.currentIndex, 0);
+  } finally {
+    source.close();
+    restored?.close();
+  }
+});
+
+Deno.test("ScenarioSession: importSaveData rejects invalid payloads", async () => {
   const scenario: Record<string, CommandIR[]> = {
     start: [{ op: "say", args: { text: "x" } }],
   };
 
   const session = new ScenarioSession();
   try {
-    session.loadScenario(scenario, "start");
+    await session.loadScenario(scenario, "start");
 
     assertThrows(
       () =>
