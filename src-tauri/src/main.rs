@@ -47,6 +47,32 @@ fn load_scenario(app: AppHandle, path: Option<String>) -> Result<String, String>
 }
 
 #[tauri::command]
+fn save_game(app_handle: AppHandle, slot_id: u32, payload: String) -> Result<(), String> {
+    let save_file_path = resolve_save_file_path(&app_handle, slot_id)
+        .map_err(|_| "ERR_STORAGE_WRITE".to_string())?;
+    let save_dir = save_file_path
+        .parent()
+        .ok_or_else(|| "ERR_STORAGE_WRITE".to_string())?;
+
+    fs::create_dir_all(save_dir).map_err(|_| "ERR_STORAGE_WRITE".to_string())?;
+    fs::write(save_file_path, payload).map_err(|_| "ERR_STORAGE_WRITE".to_string())
+}
+
+#[tauri::command]
+fn load_game(app_handle: AppHandle, slot_id: u32) -> Result<String, String> {
+    let save_file_path =
+        resolve_save_file_path(&app_handle, slot_id).map_err(|_| "ERR_STORAGE_READ".to_string())?;
+
+    match fs::read_to_string(save_file_path) {
+        Ok(payload) => Ok(payload),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err("ERR_STORAGE_NOT_FOUND".to_string())
+        }
+        Err(_) => Err("ERR_STORAGE_READ".to_string()),
+    }
+}
+
+#[tauri::command]
 async fn export_pptx(window: Window, ast: Value) -> Result<String, String> {
     let app = window.app_handle();
     let slides = parse_say_slides_from_ast(&ast)?;
@@ -290,6 +316,16 @@ fn resolve_scenario_resource_key(path: Option<&str>) -> Result<String, String> {
             }
         }
     }
+}
+
+fn resolve_save_file_path(app_handle: &AppHandle, slot_id: u32) -> Result<PathBuf, String> {
+    let app_local_data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|_| "operation rejected".to_string())?;
+    Ok(app_local_data_dir
+        .join("saves")
+        .join(format!("save_{slot_id}.json")))
 }
 
 fn parse_say_slides_from_ast(ast: &Value) -> Result<Vec<SlideData>, String> {
@@ -1046,7 +1082,12 @@ fn main() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![load_scenario, export_pptx])
+        .invoke_handler(tauri::generate_handler![
+            load_scenario,
+            save_game,
+            load_game,
+            export_pptx
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

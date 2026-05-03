@@ -4,6 +4,8 @@ import { loadBundledPluginSource } from "./browser_plugin_sources.ts";
 import { parseScenario } from "./parser.ts";
 import type { CommandIR } from "./runtime.ts";
 import { ScenarioSession } from "./session.ts";
+import { getStorage } from "./storage/index.ts";
+import { isStorageError } from "./storage/errors.ts";
 import { WorkerHost } from "./worker_host.ts";
 import type { RenderCommand, VarValue } from "./types.ts";
 
@@ -19,6 +21,7 @@ let cachedMarkdown: string | null = null;
 let scenarioChangeUnlisten: (() => void) | null = null;
 const MAX_AUTO_FORWARD_STEPS = 4096;
 const ACTIVE_SCENARIO_FILE_NAME = "demo_scenario.md";
+const DEFAULT_SAVE_SLOT = 1;
 
 const jsonViewer = document.getElementById("json-viewer");
 const saveDataInput = document.getElementById("save-data");
@@ -101,34 +104,66 @@ document.getElementById("session-step")?.addEventListener("click", async () => {
 });
 
 document.getElementById("session-save")?.addEventListener("click", () => {
-  try {
-    const saveData = session.exportSaveData();
-    saveDataInput.value = saveData;
-    renderJson(jsonViewer, { saveData });
-  } catch {
-    renderJson(jsonViewer, { error: "operation rejected" });
-  }
+  void (async () => {
+    try {
+      const saveData = session.exportSaveData();
+      await getStorage().save(DEFAULT_SAVE_SLOT, saveData);
+      saveDataInput.value = saveData;
+      renderJson(jsonViewer, {
+        saved: true,
+        slotId: DEFAULT_SAVE_SLOT,
+      });
+    } catch (error) {
+      if (isStorageError(error)) {
+        console.error("[Storage] save failed:", { code: error.code, error });
+        renderJson(jsonViewer, {
+          error: "保存に失敗しました",
+          code: error.code,
+        });
+        return;
+      }
+      console.error("[Storage] save failed:", error);
+      renderJson(jsonViewer, { error: "保存に失敗しました" });
+    }
+  })();
 });
 
 document.getElementById("session-load")?.addEventListener("click", () => {
-  try {
-    session.importSaveData(saveDataInput.value);
-    const syncCommands = buildRenderSyncCommands(session.runtimeState.vars);
-    const suspendedCommands = session.getSuspendedRenderCommands();
-    const restoreCommands = suspendedCommands === null
-      ? syncCommands
-      : [...syncCommands, ...suspendedCommands];
-    sendRenderCommands(rendererFrame, restoreCommands);
-    renderJson(jsonViewer, {
-      loaded: true,
-      currentLabel: session.currentLabel,
-      currentIndex: session.currentIndex,
-      suspendedRestored: suspendedCommands !== null,
-      renderCommands: restoreCommands,
-    });
-  } catch {
-    renderJson(jsonViewer, { error: "operation rejected" });
-  }
+  void (async () => {
+    try {
+      const saveData = await getStorage().load(DEFAULT_SAVE_SLOT);
+      saveDataInput.value = saveData;
+      await ensureSessionInitializedForLoad();
+      session.importSaveData(saveData);
+      const syncCommands = buildRenderSyncCommands(session.runtimeState.vars);
+      const suspendedCommands = session.getSuspendedRenderCommands();
+      const restoreCommands = suspendedCommands === null
+        ? syncCommands
+        : [...syncCommands, ...suspendedCommands];
+      sendRenderCommands(rendererFrame, restoreCommands);
+      renderJson(jsonViewer, {
+        loaded: true,
+        slotId: DEFAULT_SAVE_SLOT,
+        currentLabel: session.currentLabel,
+        currentIndex: session.currentIndex,
+        suspendedRestored: suspendedCommands !== null,
+        renderCommands: restoreCommands,
+      });
+    } catch (error) {
+      if (isStorageError(error)) {
+        console.error("[Storage] load failed:", { code: error.code, error });
+        renderJson(jsonViewer, {
+          error: error.code === "ERR_STORAGE_NOT_FOUND"
+            ? "セーブデータが見つかりません"
+            : "読み込みに失敗しました",
+          code: error.code,
+        });
+        return;
+      }
+      console.error("[Storage] load failed:", error);
+      renderJson(jsonViewer, { error: "読み込みに失敗しました" });
+    }
+  })();
 });
 
 document.getElementById("export-pptx")?.addEventListener("click", () => {
@@ -231,6 +266,15 @@ async function ensureScenarioMarkdown(): Promise<string> {
   }
   cachedMarkdown = await loadScenarioMarkdown();
   return cachedMarkdown;
+}
+
+async function ensureSessionInitializedForLoad(): Promise<void> {
+  if (Object.keys(session.scenario).length > 0) {
+    return;
+  }
+  const markdown = await ensureScenarioMarkdown();
+  const scenario = parseScenario(markdown);
+  await session.loadScenario(scenario, "start");
 }
 
 async function restartScenario(
