@@ -166,6 +166,7 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
 
 - [`adr/ADR-F-CORE20260403-CORE-20260413-01-secure-plugin-runtime-boundary.md`](./adr/ADR-F-CORE20260403-CORE-20260413-01-secure-plugin-runtime-boundary.md)
 - [`adr/ADR-F-CORE20260403-CORE-20260427-02-fail-fast-explicit-error-model.md`](./adr/ADR-F-CORE20260403-CORE-20260427-02-fail-fast-explicit-error-model.md)
+- [`adr/ADR-F-CORE20260403-CORE-20260503-03-tauri-first-production-with-web-fallback.md`](./adr/ADR-F-CORE20260403-CORE-20260503-03-tauri-first-production-with-web-fallback.md)
 
 ## Known Concerns / 既知の懸念
 
