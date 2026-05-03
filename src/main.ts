@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { StandardAudioAdapter } from "./audio/standardAdapter.ts";
 import { loadBundledPluginSource } from "./browser_plugin_sources.ts";
 import { parseScenario } from "./parser.ts";
 import type { CommandIR } from "./runtime.ts";
@@ -14,6 +15,7 @@ interface ScenarioChangedPayload {
 }
 
 const workerHost = new WorkerHost();
+const audioAdapter = new StandardAudioAdapter();
 const session = new ScenarioSession(workerHost, {
   loadPluginSource: loadBundledPluginSource,
 });
@@ -42,6 +44,27 @@ if (exportPptxButton instanceof HTMLElement && !isTauriRuntime()) {
 
 void setupScenarioChangeListener();
 
+(window as any).testAudio = {
+  playBgm: () =>
+    audioAdapter.dispatch({
+      namespace: "audio",
+      action: "play_bgm",
+      payload: { src: "/assets/bgm/test.ogg" },
+    }),
+  playSe: () =>
+    audioAdapter.dispatch({
+      namespace: "audio",
+      action: "play_se",
+      payload: { src: "/assets/se/test.ogg" },
+    }),
+  playVoice: () =>
+    audioAdapter.dispatch({
+      namespace: "audio",
+      action: "play_voice",
+      payload: { src: "/assets/voice/test.wav" },
+    }),
+};
+
 window.addEventListener("message", async (event) => {
   if (!isTrustedRendererEvent(event, rendererFrame)) return;
   const inputValue = parseInputValue(event.data);
@@ -67,6 +90,7 @@ window.addEventListener("message", async (event) => {
 document.getElementById("session-start")?.addEventListener("click", () => {
   void (async () => {
     try {
+      await audioAdapter.unlock();
       const markdown = await ensureScenarioMarkdown();
       const scenario = parseScenario(markdown);
       const firstStepCommands = await restartScenario(scenario, "start");
@@ -131,6 +155,7 @@ document.getElementById("session-save")?.addEventListener("click", () => {
 document.getElementById("session-load")?.addEventListener("click", () => {
   void (async () => {
     try {
+      await audioAdapter.unlock();
       const saveData = await getStorage().load(DEFAULT_SAVE_SLOT);
       saveDataInput.value = saveData;
       await ensureSessionInitializedForLoad();
