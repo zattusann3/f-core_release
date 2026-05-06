@@ -26,6 +26,8 @@ let advancing = false;
 const MAX_AUTO_FORWARD_STEPS = 4096;
 const ACTIVE_SCENARIO_FILE_NAME = "demo_scenario.md";
 const DEFAULT_SAVE_SLOT = 1;
+// Development can show stack traces by default; production can keep concise output.
+const SHOW_VERBOSE_ERRORS = import.meta.env.DEV;
 
 const jsonViewer = document.getElementById("json-viewer");
 const saveDataInput = document.getElementById("save-data");
@@ -44,6 +46,7 @@ if (exportPptxButton instanceof HTMLElement && !isTauriRuntime()) {
   exportPptxButton.style.display = "none";
 }
 
+setupGlobalErrorBoundary();
 void setupScenarioChangeListener();
 setupContextMenuSignal();
 setupStartOverlay();
@@ -443,6 +446,164 @@ function setupContextMenuSignal(): void {
     event.preventDefault();
     window.dispatchEvent(new CustomEvent("fcore:toggle-system-menu"));
   });
+}
+
+function setupGlobalErrorBoundary(): void {
+  window.addEventListener("error", (event: ErrorEvent) => {
+    showFatalErrorOverlay({
+      title: "Unhandled Runtime Error",
+      message: typeof event.message === "string" ? event.message : "Unknown error",
+      stack: event.error instanceof Error ? event.error.stack ?? null : null,
+      source: typeof event.filename === "string" ? event.filename : null,
+      line: typeof event.lineno === "number" ? event.lineno : null,
+      column: typeof event.colno === "number" ? event.colno : null,
+    });
+    // Keep default browser/devtools logging for easier diagnosis.
+    // Call event.preventDefault() here only if you intentionally want to suppress it.
+  });
+
+  window.addEventListener("unhandledrejection", (event: PromiseRejectionEvent) => {
+    const reason = event.reason;
+    const error = reason instanceof Error ? reason : null;
+    const reasonText = error?.message ??
+      (typeof reason === "string" ? reason : safeSerialize(reason));
+    showFatalErrorOverlay({
+      title: "Unhandled Promise Rejection",
+      message: reasonText,
+      stack: error?.stack ?? null,
+      source: null,
+      line: null,
+      column: null,
+    });
+    // Keep default browser/devtools logging for easier diagnosis.
+    // Call event.preventDefault() here only if you intentionally want to suppress it.
+  });
+}
+
+function safeSerialize(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function showFatalErrorOverlay(payload: {
+  title: string;
+  message: string;
+  stack: string | null;
+  source: string | null;
+  line: number | null;
+  column: number | null;
+}): void {
+  const text = formatFatalError(payload);
+  const details = SHOW_VERBOSE_ERRORS
+    ? text
+    : [
+      `Error: ${payload.message}`,
+      "",
+      "A runtime error occurred. Please copy this message and report it to the developer.",
+    ].join("\n");
+
+  const existing = document.getElementById("fc-fatal-error-overlay");
+  if (existing instanceof HTMLDivElement) {
+    const pre = existing.querySelector("pre");
+    if (pre instanceof HTMLPreElement) {
+      pre.textContent = details;
+      pre.dataset.rawError = text;
+    }
+    return;
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = "fc-fatal-error-overlay";
+  Object.assign(overlay.style, {
+    position: "fixed",
+    inset: "0",
+    zIndex: "2147483647",
+    background: "linear-gradient(180deg, #2e0000 0%, #8a0000 100%)",
+    color: "#ffe9e9",
+    padding: "24px",
+    boxSizing: "border-box",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const heading = document.createElement("h2");
+  heading.textContent = "Runtime Error";
+  heading.style.margin = "0";
+  heading.style.fontSize = "22px";
+
+  const subtitle = document.createElement("p");
+  subtitle.textContent = payload.title;
+  subtitle.style.margin = "0";
+  subtitle.style.opacity = "0.9";
+
+  const pre = document.createElement("pre");
+  pre.textContent = details;
+  pre.dataset.rawError = text;
+  Object.assign(pre.style, {
+    margin: "0",
+    padding: "12px",
+    border: "1px solid rgba(255, 210, 210, 0.4)",
+    borderRadius: "8px",
+    background: "rgba(20, 0, 0, 0.35)",
+    overflow: "auto",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    flex: "1",
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const copyButton = document.createElement("button");
+  copyButton.textContent = "Copy Error to Clipboard";
+  Object.assign(copyButton.style, {
+    alignSelf: "flex-start",
+    border: "1px solid #ffd6d6",
+    borderRadius: "8px",
+    background: "rgba(255,255,255,0.08)",
+    color: "#ffe9e9",
+    padding: "8px 12px",
+    cursor: "pointer",
+  } satisfies Partial<CSSStyleDeclaration>);
+  copyButton.addEventListener("click", () => {
+    const raw = pre.dataset.rawError ?? pre.textContent ?? "";
+    void navigator.clipboard.writeText(raw).then(() => {
+      copyButton.textContent = "Copied";
+    }).catch(() => {
+      copyButton.textContent = "Copy Failed";
+    });
+  });
+
+  overlay.append(heading, subtitle, pre, copyButton);
+  document.body.appendChild(overlay);
+}
+
+function formatFatalError(payload: {
+  title: string;
+  message: string;
+  stack: string | null;
+  source: string | null;
+  line: number | null;
+  column: number | null;
+}): string {
+  const lines = [
+    `[${payload.title}]`,
+    `Error: ${payload.message}`,
+  ];
+
+  if (payload.source !== null) {
+    const line = payload.line ?? 0;
+    const column = payload.column ?? 0;
+    lines.push(`At: ${payload.source}:${line}:${column}`);
+  }
+  if (payload.stack !== null && payload.stack.length > 0) {
+    lines.push("");
+    lines.push("Stack Trace:");
+    lines.push(payload.stack);
+  }
+  return lines.join("\n");
 }
 
 async function requestStepAdvance(): Promise<void> {

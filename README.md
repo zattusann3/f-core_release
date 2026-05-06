@@ -31,6 +31,19 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
 - EN: Plugin execution through controlled interfaces.
 - JA: 制御されたインターフェース経由でのプラグイン実行。
 
+## Project Policy / プロジェクト方針
+
+- EN: This repository is a personal project to build the author's own visual novel.
+  Issues and forks are welcome, but pull requests that are outside the author's primary goals are
+  generally not merged.
+- JA:
+  このリポジトリは、作者自身のノベルゲーム制作のための個人プロジェクトです。Issue報告やフォークは歓迎しますが、作者の主目標から外れるPRは原則としてマージしません。
+
+- EN: Forking and private customization are welcome, but do not publish derivative works under the
+  exact name `f-core`. Naming such as "f-core derivative" is acceptable.
+- JA:
+  フォークして自分用に改造することは歓迎しますが、派生版を厳密に `f-core` と名乗ることは避けてください。「f-core派生」のような表記は問題ありません。
+
 ## Quick Start / クイックスタート
 
 ### Prerequisites / 前提

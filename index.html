@@ -29,11 +29,15 @@
       </section>
       <section class="panel">
         <h1>Renderer (映写機)</h1>
-        <iframe
-          id="renderer-frame"
-          src="/renderer.html"
-          sandbox="allow-scripts allow-same-origin"
-        ></iframe>
+        <div id="renderer-shell">
+          <div id="renderer-container">
+            <iframe
+              id="renderer-frame"
+              src="/renderer.html"
+              sandbox="allow-scripts allow-same-origin"
+            ></iframe>
+          </div>
+        </div>
       </section>
     </div>
     <script type="module" src="/src/main.ts"></script>
