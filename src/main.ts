@@ -21,6 +21,8 @@ const session = new ScenarioSession(workerHost, {
 });
 let cachedMarkdown: string | null = null;
 let scenarioChangeUnlisten: (() => void) | null = null;
+let sessionStarted = false;
+let advancing = false;
 const MAX_AUTO_FORWARD_STEPS = 4096;
 const ACTIVE_SCENARIO_FILE_NAME = "demo_scenario.md";
 const DEFAULT_SAVE_SLOT = 1;
@@ -43,6 +45,8 @@ if (exportPptxButton instanceof HTMLElement && !isTauriRuntime()) {
 }
 
 void setupScenarioChangeListener();
+setupContextMenuSignal();
+setupStartOverlay();
 
 (window as any).testAudio = {
   playBgm: () =>
@@ -66,9 +70,22 @@ void setupScenarioChangeListener();
 };
 
 window.addEventListener("message", async (event) => {
-  if (!isTrustedRendererEvent(event, rendererFrame)) return;
+  const messageType = readMessageType(event.data);
+  console.debug("[main] received message:", event.data, "origin:", event.origin, "type:", messageType);
+  if (!isTrustedRendererEvent(event, rendererFrame, messageType)) return;
+  if (isToggleSystemMenuSignal(event.data)) {
+    window.dispatchEvent(new CustomEvent("fcore:toggle-system-menu"));
+    return;
+  }
+  if (isStepSignal(event.data)) {
+    await requestStepAdvance();
+    return;
+  }
+
   const inputValue = parseInputValue(event.data);
   if (inputValue === undefined) return;
+  if (advancing) return;
+  advancing = true;
 
   try {
     resumeSession(inputValue);
@@ -84,6 +101,8 @@ window.addEventListener("message", async (event) => {
     sendRenderCommands(rendererFrame, output.renderCommands);
   } catch {
     renderJson(jsonViewer, { error: "operation rejected" });
+  } finally {
+    advancing = false;
   }
 });
 
@@ -91,20 +110,7 @@ document.getElementById("session-start")?.addEventListener("click", () => {
   void (async () => {
     try {
       await audioAdapter.unlock();
-      const markdown = await ensureScenarioMarkdown();
-      const scenario = parseScenario(markdown);
-      const firstStepCommands = await restartScenario(scenario, "start");
-
-      const payload = {
-        started: true,
-        done: firstStepCommands === null,
-        renderCommands: firstStepCommands ?? [],
-        currentLabel: session.currentLabel,
-        currentIndex: session.currentIndex,
-        labels: Object.keys(scenario),
-      };
-      renderJson(jsonViewer, payload);
-      sendRenderCommands(rendererFrame, payload.renderCommands);
+      await startSessionFromStart();
     } catch {
       renderJson(jsonViewer, { error: "operation rejected" });
     }
@@ -112,19 +118,7 @@ document.getElementById("session-start")?.addEventListener("click", () => {
 });
 
 document.getElementById("session-step")?.addEventListener("click", async () => {
-  try {
-    const renderCommands = await stepUntilRenderable();
-    const output = {
-      done: renderCommands === null,
-      renderCommands: renderCommands ?? [],
-      currentLabel: session.currentLabel,
-      currentIndex: session.currentIndex,
-    };
-    renderJson(jsonViewer, output);
-    sendRenderCommands(rendererFrame, output.renderCommands);
-  } catch {
-    renderJson(jsonViewer, { error: "operation rejected" });
-  }
+  await requestStepAdvance();
 });
 
 document.getElementById("session-save")?.addEventListener("click", () => {
@@ -160,6 +154,7 @@ document.getElementById("session-load")?.addEventListener("click", () => {
       saveDataInput.value = saveData;
       await ensureSessionInitializedForLoad();
       session.importSaveData(saveData);
+      sessionStarted = true;
       const syncCommands = buildRenderSyncCommands(session.runtimeState.vars);
       const suspendedCommands = session.getSuspendedRenderCommands();
       const restoreCommands = suspendedCommands === null
@@ -307,8 +302,26 @@ async function restartScenario(
   startLabel: string,
 ): Promise<RenderCommand[] | null> {
   await session.loadScenario(scenario, startLabel);
+  sessionStarted = true;
   sendRenderCommands(rendererFrame, clearRendererCommands());
   return await stepUntilRenderable();
+}
+
+async function startSessionFromStart(): Promise<void> {
+  const markdown = await ensureScenarioMarkdown();
+  const scenario = parseScenario(markdown);
+  const firstStepCommands = await restartScenario(scenario, "start");
+
+  const payload = {
+    started: true,
+    done: firstStepCommands === null,
+    renderCommands: firstStepCommands ?? [],
+    currentLabel: session.currentLabel,
+    currentIndex: session.currentIndex,
+    labels: Object.keys(scenario),
+  };
+  renderJson(jsonViewer, payload);
+  sendRenderCommands(rendererFrame, payload.renderCommands);
 }
 
 function clearRendererCommands(): RenderCommand[] {
@@ -377,6 +390,83 @@ function renderJson(target: HTMLPreElement, data: unknown): void {
   target.textContent = JSON.stringify(data, null, 2);
 }
 
+function setupStartOverlay(): void {
+  const overlay = document.createElement("div");
+  overlay.id = "fc-start-overlay";
+  overlay.textContent = "Please click to start";
+  overlay.setAttribute("role", "button");
+  overlay.tabIndex = 0;
+  Object.assign(overlay.style, {
+    position: "fixed",
+    inset: "0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "rgba(0, 0, 0, 0.94)",
+    color: "#ffffff",
+    fontSize: "24px",
+    letterSpacing: "0.06em",
+    cursor: "pointer",
+    zIndex: "2147483647",
+    userSelect: "none",
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const startFromOverlay = async () => {
+    if (advancing || sessionStarted) return;
+    advancing = true;
+    try {
+      await audioAdapter.unlock();
+      await startSessionFromStart();
+      overlay.remove();
+    } catch {
+      renderJson(jsonViewer, { error: "operation rejected" });
+      overlay.textContent = "Failed to start. Click to retry.";
+    } finally {
+      advancing = false;
+    }
+  };
+
+  overlay.addEventListener("click", () => {
+    void startFromOverlay();
+  });
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      void startFromOverlay();
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
+function setupContextMenuSignal(): void {
+  window.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    window.dispatchEvent(new CustomEvent("fcore:toggle-system-menu"));
+  });
+}
+
+async function requestStepAdvance(): Promise<void> {
+  if (!sessionStarted || advancing) {
+    return;
+  }
+  advancing = true;
+  try {
+    const renderCommands = await stepUntilRenderable();
+    const output = {
+      done: renderCommands === null,
+      renderCommands: renderCommands ?? [],
+      currentLabel: session.currentLabel,
+      currentIndex: session.currentIndex,
+    };
+    renderJson(jsonViewer, output);
+    sendRenderCommands(rendererFrame, output.renderCommands);
+  } catch {
+    renderJson(jsonViewer, { error: "operation rejected" });
+  } finally {
+    advancing = false;
+  }
+}
+
 function parseInputValue(value: unknown): VarValue | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return undefined;
@@ -391,6 +481,14 @@ function parseInputValue(value: unknown): VarValue | undefined {
     return isVarValue(input) ? input : undefined;
   }
   return undefined;
+}
+
+function isStepSignal(value: unknown): boolean {
+  return readMessageType(value) === "fcore.step";
+}
+
+function isToggleSystemMenuSignal(value: unknown): boolean {
+  return readMessageType(value) === "fcore.toggleSystemMenu";
 }
 
 function isVarValue(input: unknown): input is VarValue {
@@ -409,12 +507,39 @@ function resumeSession(inputValue: VarValue): void {
 function isTrustedRendererEvent(
   event: MessageEvent<unknown>,
   frame: HTMLIFrameElement,
+  messageType: string | null,
 ): boolean {
   const frameWindow = frame.contentWindow;
-  if (!frameWindow || event.source !== frameWindow) {
+  if (!frameWindow) {
     return false;
   }
-  return event.origin === window.location.origin || event.origin === "null";
+
+  if (event.source !== frameWindow) {
+    return false;
+  }
+
+  if (event.origin !== window.location.origin && event.origin !== "null") {
+    return false;
+  }
+
+  return typeof messageType === "string";
+}
+
+function readMessageType(value: unknown): string | null {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return readMessageType(parsed);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const type = (value as Record<string, unknown>)["type"];
+  return typeof type === "string" ? type : null;
 }
 
 function isTauriRuntime(): boolean {
