@@ -7,7 +7,17 @@ export { ScenarioSession } from "./session.ts";
 export { WorkerHost } from "./worker_host.ts";
 export { AudioError, isAudioError } from "./audio/types.ts";
 export { StandardAudioAdapter } from "./audio/standardAdapter.ts";
+export { AssetManager, parseReleaseDirective } from "./assets/asset_manager.ts";
 export type { CommandIR, CommandResult, ExecuteOptions } from "./runtime.ts";
+export type {
+  AssetHandle,
+  AssetKind,
+  AssetManagerOptions,
+  AssetPriority,
+  AssetTransform,
+  AssetTransformContext,
+  EnsureAssetOptions,
+} from "./assets/asset_manager.ts";
 export type {
   AdapterAudioState,
   AudioCommandEnvelope,
