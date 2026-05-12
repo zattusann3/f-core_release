@@ -44,6 +44,12 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
 - JA:
   フォークして自分用に改造することは歓迎しますが、派生版を厳密に `f-core` と名乗ることは避けてください。「f-core派生」のような表記は問題ありません。
 
+- EN: For contribution intake policy, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+- JA: コントリビューション受付方針は [`CONTRIBUTING.md`](./CONTRIBUTING.md) を参照してください。
+
+- EN: For naming/branding rules of derivative distributions, see [`docs/BRANDING.md`](./docs/BRANDING.md).
+- JA: 派生配布物の命名・ブランド方針は [`docs/BRANDING.md`](./docs/BRANDING.md) を参照してください。
+
 ## Support & Responsibility Boundary / サポート範囲と責任境界
 
 - EN: Official support target is local application builds via Tauri.
@@ -252,3 +258,13 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
 
 - EN: Current concerns and risk candidates are tracked in [`docs/CONCERNS.md`](./docs/CONCERNS.md).
 - JA: 現段階の懸念点とリスク候補は [`docs/CONCERNS.md`](./docs/CONCERNS.md) に整理しています。
+
+## License / ライセンス
+
+- EN: This project is licensed under the MIT License. See [`LICENSE`](./LICENSE).
+- JA: 本プロジェクトは MIT ライセンスで提供されます。詳細は [`LICENSE`](./LICENSE) を参照してください。
+
+## Security Contact / セキュリティ連絡先
+
+- EN: For vulnerability reporting and security handling scope, see [`SECURITY.md`](./SECURITY.md).
+- JA: 脆弱性報告とセキュリティ対応範囲は [`SECURITY.md`](./SECURITY.md) を参照してください。
