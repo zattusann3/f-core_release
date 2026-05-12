@@ -44,6 +44,11 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
 - JA:
   フォークして自分用に改造することは歓迎しますが、派生版を厳密に `f-core` と名乗ることは避けてください。「f-core派生」のような表記は問題ありません。
 
+- EN: Implementation note: most source code in this repository was authored with assistance from
+  GPT-5.3-Codex. Final direction, review, and release decisions are made by the maintainer.
+- JA:
+  実装注記: このリポジトリのソースコードの大部分は GPT-5.3-Codex の支援で作成されています。最終的な方針決定・レビュー・公開判断はメンテナが行います。
+
 - EN: For contribution intake policy, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 - JA: コントリビューション受付方針は [`CONTRIBUTING.md`](./CONTRIBUTING.md) を参照してください。
 
