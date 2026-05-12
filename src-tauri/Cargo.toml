@@ -1,6 +1,6 @@
 [package]
 name = "f_core_host"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 description = "f-core Tauri host"
 authors = ["f-core"]
 edition = "2021"

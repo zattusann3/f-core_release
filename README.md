@@ -9,6 +9,9 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
   deterministic behavior.
 - JA: このリポジトリは、セキュリティ境界と決定的挙動を優先した初期実装段階です。
 
+- EN: Current release channel is **Developer Preview (Beta)**.
+- JA: 現在のリリースチャネルは **Developer Preview（Beta）** です。
+
 - EN: Public command plugins: `say`, `choice`, `set`, `asset`, `effect`, `menu`.
 - JA: 公開コマンドプラグイン: `say`、`choice`、`set`、`asset`、`effect`、`menu`。
 
@@ -263,6 +266,14 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
 
 - EN: Current concerns and risk candidates are tracked in [`docs/CONCERNS.md`](./docs/CONCERNS.md).
 - JA: 現段階の懸念点とリスク候補は [`docs/CONCERNS.md`](./docs/CONCERNS.md) に整理しています。
+
+## Release Operations / 公開運用
+
+- EN: Public release scope and force-push boundaries are documented in [`docs/PUBLISH_SCOPE.md`](./docs/PUBLISH_SCOPE.md).
+- JA: 公開スコープと強制プッシュ境界は [`docs/PUBLISH_SCOPE.md`](./docs/PUBLISH_SCOPE.md) に記載しています。
+
+- EN: Use the pre-release gate checklist at [`docs/PRE_RELEASE_CHECKLIST.md`](./docs/PRE_RELEASE_CHECKLIST.md).
+- JA: 公開直前のゲートチェックには [`docs/PRE_RELEASE_CHECKLIST.md`](./docs/PRE_RELEASE_CHECKLIST.md) を使用してください。
 
 ## License / ライセンス
 
