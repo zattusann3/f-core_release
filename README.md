@@ -209,6 +209,12 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
 - EN: See detailed command specs in [`docs/COMMANDS.md`](./docs/COMMANDS.md).
 - JA: コマンドの詳細仕様は [`docs/COMMANDS.md`](./docs/COMMANDS.md) を参照してください。
 
+- EN: For scenario writing tags (`label`, `choice`, inline commands, JSON command blocks, `@release`), see [`docs/SCENARIO_TAGS.md`](./docs/SCENARIO_TAGS.md).
+- JA: シナリオ記法タグ（`label`、`choice`、インラインコマンド、JSONコマンドブロック、`@release`）は [`docs/SCENARIO_TAGS.md`](./docs/SCENARIO_TAGS.md) を参照してください。
+
+- EN: For plugin setup and authoring flow, see [`docs/PLUGIN_DEVELOPMENT.md`](./docs/PLUGIN_DEVELOPMENT.md).
+- JA: プラグインのセットアップと作成手順は [`docs/PLUGIN_DEVELOPMENT.md`](./docs/PLUGIN_DEVELOPMENT.md) を参照してください。
+
 - EN: Public command contract is allowlisted and documented; test-only operations are not
   API-stable.
 - JA: 公開コマンド契約はallowlistで管理し文書化します。テスト専用オペレーションはAPI互換対象外です。
