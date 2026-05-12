@@ -18,7 +18,7 @@ import type { PluginArgs, RenderCommand, VarValue } from "./types.ts";
 import type { WorkerExecuteRequest, WorkerExecuteSuccess } from "./worker_protocol.ts";
 import { WorkerHost } from "./worker_host.ts";
 
-const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_TIMEOUT_MS = 2000;
 const OP_NAME_RE = /^[a-z0-9_]+$/;
 let manifestIntegrityPromise: Promise<void> | null = null;
 

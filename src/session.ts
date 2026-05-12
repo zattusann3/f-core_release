@@ -17,6 +17,8 @@ const RESERVED_VAR_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_SAVE_DATA_BYTES = 64 * 1024;
 const MAX_SCENARIO_LABELS = 1024;
 const MAX_COMMANDS_PER_LABEL = 4096;
+const MAX_RELEASE_ASSET_IDS = 32;
+const MAX_RELEASE_ARGS_BYTES = 4096;
 const DOM_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const CSS_VAR_KEY_RE = /^--fc-[A-Za-z0-9_-]+$/;
 const RENDER_ASSET_SRC_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -30,6 +32,10 @@ const RENDER_ASSET_ALLOWED_EXTENSIONS = new Set([
 ]);
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/;
 
+export interface ScenarioSessionHooks {
+  onReleaseAssets?: (ids: ReadonlyArray<string>) => void | Promise<void>;
+}
+
 export class ScenarioSession {
   scenario: Record<string, CommandIR[]> = {};
   runtimeState: RuntimeState = { vars: {} };
@@ -37,12 +43,18 @@ export class ScenarioSession {
   currentIndex = 0;
   private readonly workerHost: WorkerHost;
   private readonly executeOptions: ExecuteOptions;
+  private readonly hooks: ScenarioSessionHooks;
   private readonly stepMutex = createAsyncMutex();
   private suspendedRenderCommands: RenderCommand[] | null = null;
 
-  constructor(workerHost = new WorkerHost(), executeOptions: ExecuteOptions = {}) {
+  constructor(
+    workerHost = new WorkerHost(),
+    executeOptions: ExecuteOptions = {},
+    hooks: ScenarioSessionHooks = {},
+  ) {
     this.workerHost = workerHost;
     this.executeOptions = executeOptions;
+    this.hooks = hooks;
   }
 
   async loadScenario(scenario: Record<string, CommandIR[]>, startLabel: string): Promise<void> {
@@ -65,6 +77,7 @@ export class ScenarioSession {
 
   async step(): Promise<RenderCommand[] | null> {
     const release = await this.stepMutex.acquire();
+    let shouldResetLastInput = false;
     try {
       if (this.currentLabel === null) {
         throw new Error("session not started");
@@ -76,8 +89,17 @@ export class ScenarioSession {
 
       const command = commands[this.currentIndex];
       if (!command) {
-        this.runtimeState.vars["_last_input"] = null;
+        shouldResetLastInput = true;
         return null;
+      }
+
+      shouldResetLastInput = true;
+      if (command.op === "release_assets") {
+        const ids = parseReleaseAssetIds(command.args);
+        await this.hooks.onReleaseAssets?.(ids);
+        this.suspendedRenderCommands = null;
+        this.currentIndex += 1;
+        return [];
       }
 
       const result = await executeCommand(
@@ -86,26 +108,25 @@ export class ScenarioSession {
         this.workerHost,
         this.executeOptions,
       );
-      try {
-        if (!result.suspended) {
-          this.suspendedRenderCommands = null;
-          if (result.jumpTo !== null) {
-            if (!(result.jumpTo in this.scenario)) {
-              throw new Error("invalid session state");
-            }
-            this.currentLabel = result.jumpTo;
-            this.currentIndex = 0;
-          } else if (result.requestedNext) {
-            this.currentIndex += 1;
+      if (!result.suspended) {
+        this.suspendedRenderCommands = null;
+        if (result.jumpTo !== null) {
+          if (!(result.jumpTo in this.scenario)) {
+            throw new Error("invalid session state");
           }
-        } else {
-          this.suspendedRenderCommands = [...result.renderCommands];
+          this.currentLabel = result.jumpTo;
+          this.currentIndex = 0;
+        } else if (result.requestedNext) {
+          this.currentIndex += 1;
         }
-        return [...result.renderCommands];
-      } finally {
+      } else {
+        this.suspendedRenderCommands = [...result.renderCommands];
+      }
+      return [...result.renderCommands];
+    } finally {
+      if (shouldResetLastInput) {
         this.runtimeState.vars["_last_input"] = null;
       }
-    } finally {
       release();
     }
   }
@@ -166,6 +187,33 @@ export class ScenarioSession {
       ? null
       : [...saveData.suspendedRenderCommands];
   }
+}
+
+function parseReleaseAssetIds(args: unknown): string[] {
+  if (!isPlainRecord(args)) {
+    throw new Error("invalid scenario");
+  }
+  const ids = args["ids"];
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new Error("invalid scenario");
+  }
+  if (ids.length > MAX_RELEASE_ASSET_IDS) {
+    throw new Error("invalid scenario");
+  }
+  const normalized = ids.map((id) => {
+    if (typeof id !== "string") {
+      throw new Error("invalid scenario");
+    }
+    const trimmed = id.trim();
+    if (trimmed.length === 0) {
+      throw new Error("invalid scenario");
+    }
+    return trimmed;
+  });
+  if (safeJsonByteLength({ ids: normalized }) > MAX_RELEASE_ARGS_BYTES) {
+    throw new Error("invalid scenario");
+  }
+  return normalized;
 }
 
 interface SaveData {

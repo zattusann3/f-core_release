@@ -132,3 +132,35 @@ Deno.test("parseScenario: rejects unterminated fcore JSON block", () => {
 
   assertThrows(() => parseScenario(markdown), Error, "parse error");
 });
+
+Deno.test("parseScenario: parses @release directive as system command", () => {
+  const markdown = `
+{{# label: start }}
+@release bg/intro.jpg [fg/hero.png],(se/click.ogg)
+{{ end }}
+`;
+
+  const parsed = parseScenario(markdown);
+
+  assertEquals(parsed, {
+    start: [
+      {
+        op: "release_assets",
+        args: {
+          ids: ["bg/intro.jpg", "fg/hero.png", "se/click.ogg"],
+        },
+      },
+    ],
+  });
+});
+
+Deno.test("parseScenario: rejects @release with too many asset ids", () => {
+  const ids = Array.from({ length: 33 }, (_, index) => `bg/${index}.png`).join(" ");
+  const markdown = `
+{{# label: start }}
+@release ${ids}
+{{ end }}
+`;
+
+  assertThrows(() => parseScenario(markdown), Error, "parse error");
+});

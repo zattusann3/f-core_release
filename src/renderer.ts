@@ -87,6 +87,15 @@ function resolveAssetSrc(rawSrc) {
     throw new Error("invalid asset src");
   }
 
+  if (
+    trimmed.startsWith("blob:") ||
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("asset:") ||
+    trimmed.startsWith("tauri:")
+  ) {
+    return trimmed;
+  }
+
   if (trimmed.startsWith("/assets/")) {
     return trimmed;
   }
@@ -94,7 +103,7 @@ function resolveAssetSrc(rawSrc) {
     return `/${trimmed}`;
   }
   if (trimmed.startsWith("/")) {
-    return `/assets/${encodeURIComponent(trimmed.slice(1))}`;
+    return `/assets/${trimmed.slice(1).split("/").map((segment) => encodeURIComponent(segment)).join("/")}`;
   }
-  return `/assets/${encodeURIComponent(trimmed)}`;
+  return `/assets/${trimmed.split("/").map((segment) => encodeURIComponent(segment)).join("/")}`;
 }

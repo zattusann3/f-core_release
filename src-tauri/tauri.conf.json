@@ -14,17 +14,18 @@
       {
         "label": "main",
         "title": "f-core host",
-        "width": 1400,
-        "height": 900,
+        "width": 1280,
+        "height": 720,
         "resizable": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; img-src * data: blob: asset: tauri: http://localhost:* http://127.0.0.1:*; media-src * data: blob: asset: tauri: http://localhost:* http://127.0.0.1:*; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*;"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: tauri:; media-src 'self' data: blob: asset: tauri:; connect-src 'self' ipc: http://ipc.localhost;"
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": "all",
     "resources": ["../public/assets/**/*"]
   }
 }

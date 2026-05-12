@@ -1,4 +1,5 @@
-import { createPluginContext, type FlowControl, type RuntimeState } from "../../src/context.ts";
+import { createPluginContext } from "../../src/context.ts";
+import type { FlowControl, RuntimeState } from "../../src/context.ts";
 import { execute as sayExecute } from "../../src/plugins/say.ts";
 import type { PluginModule, VarValue } from "../../src/types.ts";
 import type {

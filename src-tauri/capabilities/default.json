@@ -3,5 +3,14 @@
   "identifier": "default",
   "description": "Default capability for f-core host.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default"]
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:webview:deny-internal-toggle-devtools",
+    "dialog:default",
+    "allow-load-scenario",
+    "allow-save-game",
+    "allow-load-game",
+    "allow-export-pptx"
+  ]
 }

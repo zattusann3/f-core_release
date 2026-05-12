@@ -138,9 +138,15 @@ fn resource_key_candidates(resource_key: &str) -> Vec<String> {
     if normalized.starts_with("public/assets/") {
         push_unique(normalized.clone());
         push_unique(normalized.trim_start_matches("public/").to_string());
+        push_unique(
+            normalized
+                .trim_start_matches("public/assets/")
+                .to_string(),
+        );
     } else if normalized.starts_with("assets/") {
         push_unique(format!("public/{normalized}"));
         push_unique(normalized.clone());
+        push_unique(normalized.trim_start_matches("assets/").to_string());
     } else {
         push_unique(format!("public/assets/{normalized}"));
         push_unique(format!("assets/{normalized}"));

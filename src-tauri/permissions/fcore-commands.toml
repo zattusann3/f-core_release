@@ -1,0 +1,19 @@
+[[permission]]
+identifier = "allow-load-scenario"
+description = "Enables the load_scenario command."
+commands.allow = ["load_scenario"]
+
+[[permission]]
+identifier = "allow-save-game"
+description = "Enables the save_game command."
+commands.allow = ["save_game"]
+
+[[permission]]
+identifier = "allow-load-game"
+description = "Enables the load_game command."
+commands.allow = ["load_game"]
+
+[[permission]]
+identifier = "allow-export-pptx"
+description = "Enables the export_pptx command."
+commands.allow = ["export_pptx"]

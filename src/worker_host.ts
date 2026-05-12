@@ -12,16 +12,21 @@ interface PendingRequest {
 
 export interface WorkerHostOptions {
   workerUrl?: URL;
+  workerFactory?: () => Worker;
 }
 
 export class WorkerHost {
   private worker: Worker | null = null;
   private readonly pending = new Map<string, PendingRequest>();
-  private readonly workerUrl: URL;
+  private readonly workerUrl: URL | null;
+  private readonly workerFactory: (() => Worker) | null;
   private closed = false;
 
   constructor(options: WorkerHostOptions = {}) {
-    this.workerUrl = options.workerUrl ?? new URL("./worker_runner.ts", import.meta.url);
+    this.workerFactory = options.workerFactory ?? null;
+    this.workerUrl = options.workerUrl ?? (
+      this.workerFactory === null ? new URL("./worker_runner.ts", import.meta.url) : null
+    );
   }
 
   execute(request: WorkerExecuteRequest, timeoutMs: number): Promise<WorkerExecuteSuccess> {
@@ -63,13 +68,7 @@ export class WorkerHost {
       return this.worker;
     }
 
-    const denoGlobal = (globalThis as typeof globalThis & { Deno?: unknown }).Deno;
-    const worker = denoGlobal !== undefined
-      ? new Worker(
-        this.workerUrl,
-        { type: "module", deno: { permissions: "none" } } as WorkerOptions,
-      )
-      : new Worker(this.workerUrl, { type: "module" });
+    const worker = this.createWorker();
 
     worker.onmessage = (event: MessageEvent<WorkerExecuteResponse>) => {
       this.handleMessage(event.data);
@@ -83,6 +82,24 @@ export class WorkerHost {
 
     this.worker = worker;
     return worker;
+  }
+
+  private createWorker(): Worker {
+    if (this.workerFactory) {
+      return this.workerFactory();
+    }
+    if (!this.workerUrl) {
+      throw new Error("worker host misconfigured");
+    }
+
+    const denoGlobal = (globalThis as typeof globalThis & { Deno?: unknown }).Deno;
+    if (denoGlobal !== undefined) {
+      return new Worker(
+        this.workerUrl,
+        { type: "module", deno: { permissions: "none" } } as WorkerOptions,
+      );
+    }
+    return new Worker(this.workerUrl, { type: "module" });
   }
 
   private handleMessage(payload: unknown): void {

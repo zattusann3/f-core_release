@@ -44,6 +44,64 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
 - JA:
   フォークして自分用に改造することは歓迎しますが、派生版を厳密に `f-core` と名乗ることは避けてください。「f-core派生」のような表記は問題ありません。
 
+## Support & Responsibility Boundary / サポート範囲と責任境界
+
+- EN: Official support target is local application builds via Tauri.
+  Browser/HTML builds are provided for development preview and compatibility checks, and are not
+  covered by equivalent support or security guarantees.
+- JA:
+  公式サポート対象は Tauri によるローカルアプリケーションビルドです。ブラウザ/HTML
+  ビルドは開発プレビューおよび互換性検証用として提供し、同等のサポートおよびセキュリティ保証の対象外です。
+
+- EN: f-core is a local-first scenario runtime.
+  Official core/host does not provide network communication, account systems, payments, online
+  rankings, chat, or external API credential management.
+- JA:
+  f-core はローカルファーストのシナリオ実行環境です。公式コア/ホストは、ネットワーク通信、アカウント機能、決済、オンラインランキング、チャット、外部API資格情報の管理を提供しません。
+
+- EN: Third-party plugins, external communication adapters, modified forks, and online-service
+  integrations are outside official support and official security boundaries.
+- JA:
+  サードパーティ製プラグイン、外部通信アダプタ、改造版、オンラインサービス連携は、公式サポートおよび公式セキュリティ境界の対象外です。
+
+- EN: Official plugins are limited to audited basic commands that run under zero-permission
+  assumptions. Official plugins will not be granted file I/O, network access, OS control, or
+  arbitrary JavaScript execution.
+- JA:
+  公式プラグインは、権限ゼロ前提で動作する監査済みの基本命令セットに限定します。公式プラグインへファイルI/O、ネットワーク通信、OS操作、任意JavaScript実行を許可しません。
+
+- EN: Browser/HTML builds are intended for local preview and client-side validation.
+  Production operations such as web hosting, external networking, rankings, chat, and API
+  integrations are the developer's responsibility.
+- JA:
+  ブラウザ/HTML ビルドはローカルプレビューおよびクライアントサイド検証を目的とします。Webホスティング、外部通信、ランキング、チャット、API連携を含む運用は各開発者の責任です。
+
+- EN: Non-goals in official distribution:
+  no official chat, no official online ranking, no official account management, no official
+  payment features, no official API key/token custody, no official server operations, and no
+  support for modified forks.
+- JA:
+  公式配布の非搭載方針:
+  公式チャット通信なし、公式オンラインランキングなし、公式アカウント管理なし、公式決済機能なし、公式APIキー/トークン管理なし、公式サーバー運用なし、改造版サポートなし。
+
+- EN: High-risk features (external communication, rankings, chat, advanced OS integrations) are
+  intentionally excluded from official core. If needed, implement them as third-party adapters at
+  your own responsibility.
+- JA:
+  外部通信、ランキング、チャット、特殊なOS連携などの高リスク機能は、公式コアに含めません。必要な場合は、開発者が各自の責任でサードパーティアダプタとして実装してください。
+
+- EN: This project is maintained by an individual. Support is best-effort, with no SLA.
+- JA:
+  本プロジェクトは個人運営です。サポートはベストエフォートであり、SLAは提供しません。
+
+- EN: In short:
+  f-core provides a safe local runtime and minimal official command set. Dangerous permissions,
+  external services, and operation-heavy responsibilities are intentionally separated from official
+  core.
+- JA:
+  要約:
+  f-core は、安全なローカル実行環境と最小限の公式命令セットを提供します。危険な権限、外部サービス、運用責任を伴う機能は公式コアから切り離します。
+
 ## Quick Start / クイックスタート
 
 ### Prerequisites / 前提

@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { StandardAudioAdapter } from "./audio/standardAdapter.ts";
+import FCoreWorker from "./worker_runner.ts?worker";
+import {
+  AssetManager,
+  type AssetKind,
+} from "./assets/asset_manager.ts";
 import { loadBundledPluginSource } from "./browser_plugin_sources.ts";
 import { parseScenario } from "./parser.ts";
 import type { CommandIR } from "./runtime.ts";
@@ -14,11 +19,25 @@ interface ScenarioChangedPayload {
   path?: unknown;
 }
 
-const workerHost = new WorkerHost();
+interface RendererReadyLatch {
+  readonly promise: Promise<void>;
+  isReady(): boolean;
+}
+
+const workerHost = new WorkerHost({
+  workerFactory: () => new FCoreWorker(),
+});
 const audioAdapter = new StandardAudioAdapter();
+const assetManager = new AssetManager();
 const session = new ScenarioSession(workerHost, {
   loadPluginSource: loadBundledPluginSource,
+}, {
+  onReleaseAssets: (ids) => {
+    handleReleaseAssets(ids);
+  },
 });
+const assetOwners = new Map<string, Set<string>>();
+const activeAudioByChannel = new Map<string, string>();
 let cachedMarkdown: string | null = null;
 let scenarioChangeUnlisten: (() => void) | null = null;
 let sessionStarted = false;
@@ -26,8 +45,10 @@ let advancing = false;
 const MAX_AUTO_FORWARD_STEPS = 4096;
 const ACTIVE_SCENARIO_FILE_NAME = "demo_scenario.md";
 const DEFAULT_SAVE_SLOT = 1;
+const IS_PROD_BUILD = import.meta.env.PROD;
 // Development can show stack traces by default; production can keep concise output.
 const SHOW_VERBOSE_ERRORS = import.meta.env.DEV;
+const startupDiagnostics: string[] = [];
 
 const jsonViewer = document.getElementById("json-viewer");
 const saveDataInput = document.getElementById("save-data");
@@ -41,6 +62,11 @@ if (
 ) {
   throw new Error("operation rejected");
 }
+const rendererReady = createRendererReadyLatch(rendererFrame);
+
+if (IS_PROD_BUILD) {
+  document.body.classList.add("prod-mode");
+}
 
 if (exportPptxButton instanceof HTMLElement && !isTauriRuntime()) {
   exportPptxButton.style.display = "none";
@@ -52,24 +78,9 @@ setupContextMenuSignal();
 setupStartOverlay();
 
 (window as any).testAudio = {
-  playBgm: () =>
-    audioAdapter.dispatch({
-      namespace: "audio",
-      action: "play_bgm",
-      payload: { src: "/assets/bgm/test.ogg" },
-    }),
-  playSe: () =>
-    audioAdapter.dispatch({
-      namespace: "audio",
-      action: "play_se",
-      payload: { src: "/assets/se/test.ogg" },
-    }),
-  playVoice: () =>
-    audioAdapter.dispatch({
-      namespace: "audio",
-      action: "play_voice",
-      payload: { src: "/assets/voice/test.wav" },
-    }),
+  playBgm: () => playAudioByAsset("play_bgm", "/assets/bgm/test.ogg", "bgm"),
+  playSe: () => playAudioByAsset("play_se", "/assets/se/test.ogg", "se"),
+  playVoice: () => playAudioByAsset("play_voice", "/assets/voice/test.wav", "voice"),
 };
 
 window.addEventListener("message", async (event) => {
@@ -101,7 +112,7 @@ window.addEventListener("message", async (event) => {
       currentIndex: session.currentIndex,
     };
     renderJson(jsonViewer, output);
-    sendRenderCommands(rendererFrame, output.renderCommands);
+    await sendRenderCommands(rendererFrame, output.renderCommands);
   } catch {
     renderJson(jsonViewer, { error: "operation rejected" });
   } finally {
@@ -112,10 +123,11 @@ window.addEventListener("message", async (event) => {
 document.getElementById("session-start")?.addEventListener("click", () => {
   void (async () => {
     try {
+      clearStartupDiagnostics();
       await audioAdapter.unlock();
       await startSessionFromStart();
-    } catch {
-      renderJson(jsonViewer, { error: "operation rejected" });
+    } catch (error) {
+      renderOperationRejected("session-start", error);
     }
   })();
 });
@@ -163,7 +175,8 @@ document.getElementById("session-load")?.addEventListener("click", () => {
       const restoreCommands = suspendedCommands === null
         ? syncCommands
         : [...syncCommands, ...suspendedCommands];
-      sendRenderCommands(rendererFrame, restoreCommands);
+      resetActiveAssetsProtection();
+      await sendRenderCommands(rendererFrame, restoreCommands);
       renderJson(jsonViewer, {
         loaded: true,
         slotId: DEFAULT_SAVE_SLOT,
@@ -244,6 +257,7 @@ async function reloadScenarioAfterChange(
 
   cachedMarkdown = null;
   try {
+    clearStartupDiagnostics();
     const markdown = await ensureScenarioMarkdown();
     const scenario = parseScenario(markdown);
     const nextStartLabel = chooseReloadStartLabel(scenario);
@@ -261,9 +275,9 @@ async function reloadScenarioAfterChange(
     };
     console.log("[HMR] Sending render commands after reload...");
     renderJson(jsonViewer, output);
-    sendRenderCommands(rendererFrame, output.renderCommands);
-  } catch {
-    renderJson(jsonViewer, { scenarioChanged: true, error: "operation rejected" });
+    await sendRenderCommands(rendererFrame, output.renderCommands);
+  } catch (error) {
+    renderOperationRejected("scenario-reload", error, { scenarioChanged: true });
   }
 }
 
@@ -271,15 +285,34 @@ async function loadScenarioMarkdown(): Promise<string> {
   if (isTauriRuntime()) {
     try {
       return await invoke<string>("load_scenario", { path: "demo" });
-    } catch {
-      throw new Error("operation rejected");
+    } catch (error) {
+      pushStartupDiagnostic("invoke(load_scenario) failed", error);
+      pushStartupDiagnostic(
+        "scenario path candidates",
+        scenarioPathCandidatesForDiagnostics(),
+      );
+      const response = await window.fetch("/assets/demo_scenario.md");
+      if (!response.ok) {
+        pushStartupDiagnostic(
+          "fetch(/assets/demo_scenario.md) failed",
+          `HTTP ${response.status} ${response.statusText}`,
+        );
+        throw new Error("operation rejected");
+      }
+      pushStartupDiagnostic("fallback fetch succeeded", "/assets/demo_scenario.md");
+      return await response.text();
     }
   }
 
-  const response = await fetch("/assets/demo_scenario.md");
+  const response = await window.fetch("/assets/demo_scenario.md");
   if (!response.ok) {
+    pushStartupDiagnostic(
+      "web fetch(/assets/demo_scenario.md) failed",
+      `HTTP ${response.status} ${response.statusText}`,
+    );
     throw new Error("operation rejected");
   }
+  pushStartupDiagnostic("web fetch succeeded", "/assets/demo_scenario.md");
   return await response.text();
 }
 
@@ -306,7 +339,7 @@ async function restartScenario(
 ): Promise<RenderCommand[] | null> {
   await session.loadScenario(scenario, startLabel);
   sessionStarted = true;
-  sendRenderCommands(rendererFrame, clearRendererCommands());
+  await sendRenderCommands(rendererFrame, clearRendererCommands());
   return await stepUntilRenderable();
 }
 
@@ -324,10 +357,56 @@ async function startSessionFromStart(): Promise<void> {
     labels: Object.keys(scenario),
   };
   renderJson(jsonViewer, payload);
-  sendRenderCommands(rendererFrame, payload.renderCommands);
+  await sendRenderCommands(rendererFrame, payload.renderCommands);
+}
+
+function pushStartupDiagnostic(label: string, detail: unknown): void {
+  const rendered = typeof detail === "string"
+    ? detail
+    : safeSerialize(detail);
+  startupDiagnostics.push(`${label}: ${rendered}`);
+}
+
+function clearStartupDiagnostics(): void {
+  startupDiagnostics.length = 0;
+}
+
+function scenarioPathCandidatesForDiagnostics(): string[] {
+  return [
+    "public/assets/demo_scenario.md",
+    "assets/demo_scenario.md",
+    "demo_scenario.md",
+    "_up_/public/assets/demo_scenario.md",
+    "_up_/assets/demo_scenario.md",
+    "/assets/demo_scenario.md (fetch fallback)",
+  ];
+}
+
+function renderOperationRejected(
+  context: string,
+  error: unknown,
+  extra: Record<string, unknown> = {},
+): void {
+  console.error("[f-core] operation rejected", {
+    context,
+    error,
+    extra,
+    diagnostics: startupDiagnostics,
+  });
+  const payload: Record<string, unknown> = {
+    ...extra,
+    error: "operation rejected",
+    context,
+    diagnostics: [...startupDiagnostics],
+  };
+  if (SHOW_VERBOSE_ERRORS) {
+    payload["detail"] = safeSerialize(error);
+  }
+  renderJson(jsonViewer, payload);
 }
 
 function clearRendererCommands(): RenderCommand[] {
+  resetActiveAssetsProtection();
   return [
     { type: "ClearSubtree", targetId: "fc-bg-layer" },
     { type: "ClearSubtree", targetId: "fc-fg-layer" },
@@ -379,14 +458,17 @@ function hasBlockingRenderCommands(commands: ReadonlyArray<RenderCommand>): bool
   });
 }
 
-function sendRenderCommands(
+async function sendRenderCommands(
   frame: HTMLIFrameElement,
   renderCommands: ReadonlyArray<RenderCommand>,
-): void {
+): Promise<void> {
+  await rendererReady.promise;
+  const prepared = await prepareRenderCommands(renderCommands);
   frame.contentWindow?.postMessage(
-    { type: "fcore.renderCommands", renderCommands },
+    { type: "fcore.renderCommands", renderCommands: prepared },
     "*",
   );
+  syncProtectedAssets();
 }
 
 function renderJson(target: HTMLPreElement, data: unknown): void {
@@ -418,11 +500,12 @@ function setupStartOverlay(): void {
     if (advancing || sessionStarted) return;
     advancing = true;
     try {
+      clearStartupDiagnostics();
       await audioAdapter.unlock();
       await startSessionFromStart();
       overlay.remove();
-    } catch {
-      renderJson(jsonViewer, { error: "operation rejected" });
+    } catch (error) {
+      renderOperationRejected("start-overlay", error);
       overlay.textContent = "Failed to start. Click to retry.";
     } finally {
       advancing = false;
@@ -620,7 +703,7 @@ async function requestStepAdvance(): Promise<void> {
       currentIndex: session.currentIndex,
     };
     renderJson(jsonViewer, output);
-    sendRenderCommands(rendererFrame, output.renderCommands);
+    await sendRenderCommands(rendererFrame, output.renderCommands);
   } catch {
     renderJson(jsonViewer, { error: "operation rejected" });
   } finally {
@@ -684,6 +767,48 @@ function isTrustedRendererEvent(
   }
 
   return typeof messageType === "string";
+}
+
+function createRendererReadyLatch(frame: HTMLIFrameElement): RendererReadyLatch {
+  let ready = false;
+  let resolveReady!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    resolveReady = resolve;
+  });
+  const markReady = (): void => {
+    if (ready) {
+      return;
+    }
+    ready = true;
+    window.removeEventListener("message", onMessage);
+    frame.removeEventListener("load", onLoad);
+    resolveReady();
+  };
+
+  const onMessage = (event: MessageEvent<unknown>): void => {
+    const messageType = readMessageType(event.data);
+    if (messageType !== "RendererReady") {
+      return;
+    }
+    if (!isTrustedRendererEvent(event, frame, messageType)) {
+      return;
+    }
+    markReady();
+  };
+  const onLoad = (): void => {
+    const state = frame.contentDocument?.readyState;
+    if (state === "interactive" || state === "complete") {
+      markReady();
+    }
+  };
+
+  window.addEventListener("message", onMessage);
+  frame.addEventListener("load", onLoad);
+  onLoad();
+  return {
+    promise,
+    isReady: () => ready,
+  };
 }
 
 function readMessageType(value: unknown): string | null {
@@ -795,4 +920,180 @@ function isSafeAssetFileName(value: string): boolean {
     ext === ".svg" ||
     ext === ".gif"
   );
+}
+
+async function playAudioByAsset(
+  action: "play_bgm" | "play_se" | "play_voice",
+  src: string,
+  kind: AssetKind,
+): Promise<void> {
+  const channel = toAudioChannel(action);
+  const ownerId = audioOwnerId(channel);
+  const previousAssetId = activeAudioByChannel.get(channel);
+  const handle = await assetManager.ensure(src, {
+    kind,
+    priority: "high",
+    protect: true,
+  });
+
+  addAssetOwner(handle.id, ownerId);
+  syncProtectedAssets();
+
+  try {
+    await audioAdapter.dispatch({
+      namespace: "audio",
+      action,
+      payload: { src: handle.objectUrl },
+    });
+  } catch (error) {
+    removeAssetOwner(handle.id, ownerId);
+    syncProtectedAssets();
+    throw error;
+  }
+
+  if (previousAssetId !== undefined && previousAssetId !== handle.id) {
+    removeAssetOwner(previousAssetId, ownerId);
+  }
+  activeAudioByChannel.set(channel, handle.id);
+  syncProtectedAssets();
+}
+
+async function prepareRenderCommands(
+  renderCommands: ReadonlyArray<RenderCommand>,
+): Promise<RenderCommand[]> {
+  const commands: RenderCommand[] = [];
+
+  for (const command of renderCommands) {
+    if (command.type === "ClearSubtree") {
+      clearLayerAssets(command.targetId);
+      commands.push(command);
+      continue;
+    }
+
+    if (command.type === "AppendNode" && command.tag === "img" && typeof command.src === "string") {
+      const kind = inferAssetKind(command.parentId, command.src);
+      const handle = await assetManager.ensure(command.src, {
+        kind,
+        priority: "high",
+        protect: true,
+      });
+      markAssetActive(handle.id, command.parentId);
+      commands.push({ ...command, src: handle.objectUrl });
+      continue;
+    }
+
+    commands.push(command);
+  }
+
+  return commands;
+}
+
+function handleReleaseAssets(ids: ReadonlyArray<string>): void {
+  assetManager.releaseMany(ids);
+  for (const id of ids) {
+    assetOwners.delete(id);
+  }
+  for (const [channel, id] of activeAudioByChannel.entries()) {
+    if (ids.includes(id)) {
+      activeAudioByChannel.delete(channel);
+    }
+  }
+  syncProtectedAssets();
+}
+
+function markAssetActive(id: string, parentId?: string): void {
+  if (typeof parentId !== "string" || parentId.trim().length === 0) {
+    return;
+  }
+  addAssetOwner(id, layerOwnerId(parentId));
+}
+
+function clearLayerAssets(parentId: string): void {
+  if (typeof parentId !== "string" || parentId.trim().length === 0) {
+    return;
+  }
+  removeOwnerFromAllAssets(layerOwnerId(parentId));
+}
+
+function resetActiveAssetsProtection(): void {
+  assetOwners.clear();
+  activeAudioByChannel.clear();
+  syncProtectedAssets();
+}
+
+function syncProtectedAssets(): void {
+  assetManager.setProtected(Array.from(assetOwners.keys()));
+}
+
+function inferAssetKind(parentId: string, src: string): AssetKind {
+  const lower = src.toLowerCase();
+  if (lower.includes("/bg/") || parentId === "fc-bg-layer") {
+    return "bg";
+  }
+  if (lower.includes("/fg/") || parentId === "fc-fg-layer") {
+    return "fg";
+  }
+  if (lower.includes("/voice/")) {
+    return "voice";
+  }
+  if (lower.includes("/se/")) {
+    return "se";
+  }
+  if (lower.includes("/bgm/")) {
+    return "bgm";
+  }
+  if (lower.endsWith(".mp4") || lower.endsWith(".webm")) {
+    return "video";
+  }
+  return "generic";
+}
+
+function toAudioChannel(action: "play_bgm" | "play_se" | "play_voice"): "bgm" | "se" | "voice" {
+  if (action === "play_bgm") {
+    return "bgm";
+  }
+  if (action === "play_se") {
+    return "se";
+  }
+  return "voice";
+}
+
+function addAssetOwner(assetId: string, ownerId: string): void {
+  let owners = assetOwners.get(assetId);
+  if (!owners) {
+    owners = new Set<string>();
+    assetOwners.set(assetId, owners);
+  }
+  owners.add(ownerId);
+}
+
+function removeAssetOwner(assetId: string, ownerId: string): void {
+  const owners = assetOwners.get(assetId);
+  if (!owners) {
+    return;
+  }
+  owners.delete(ownerId);
+  if (owners.size === 0) {
+    assetOwners.delete(assetId);
+  }
+}
+
+function removeOwnerFromAllAssets(ownerId: string): void {
+  for (const [assetId, owners] of assetOwners.entries()) {
+    if (!owners.has(ownerId)) {
+      continue;
+    }
+    owners.delete(ownerId);
+    if (owners.size === 0) {
+      assetOwners.delete(assetId);
+    }
+  }
+}
+
+function layerOwnerId(parentId: string): string {
+  return `layer:${parentId}`;
+}
+
+function audioOwnerId(channel: "bgm" | "se" | "voice"): string {
+  return `audio:${channel}`;
 }

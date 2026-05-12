@@ -7,6 +7,9 @@ const CHOICE_ITEM_RE = /^-\s*(.+?)\s*->\s*([A-Za-z0-9_]+)\s*$/;
 const INLINE_COMMAND_RE = /^{{\s*@([A-Za-z0-9_]+)(?:\s+(.+?))?\s*}}$/;
 const JSON_BLOCK_OPEN_RE = /^```fcore:([A-Za-z0-9_]+)\s*$/;
 const JSON_BLOCK_CLOSE_RE = /^```\s*$/;
+const RELEASE_DIRECTIVE_RE = /^@release(?:\s+(.+))?$/;
+const MAX_RELEASE_ASSET_IDS = 32;
+const MAX_RELEASE_ARGS_BYTES = 4096;
 
 interface MenuChoice {
   text: string;
@@ -67,6 +70,12 @@ export function parseScenario(markdown: string): Record<string, CommandIR[]> {
     const inlineCommand = parseInlineCommand(trimmed);
     if (inlineCommand) {
       currentCommands.push(inlineCommand);
+      continue;
+    }
+
+    const releaseCommand = parseReleaseCommand(trimmed);
+    if (releaseCommand) {
+      currentCommands.push(releaseCommand);
       continue;
     }
 
@@ -143,6 +152,92 @@ function parseInlineCommand(line: string): CommandIR | null {
     op,
     args: parseInlineArgs(rawArgs),
   };
+}
+
+function parseReleaseCommand(line: string): CommandIR | null {
+  const match = line.match(RELEASE_DIRECTIVE_RE);
+  if (!match) {
+    return null;
+  }
+
+  const raw = (match[1] ?? "").trim();
+  if (raw.length === 0) {
+    throw new Error("parse error");
+  }
+
+  const ids = raw.split(/\s+/g).flatMap((token) => token.split(",")).map((token) => token.trim())
+    .filter((token) => token.length > 0)
+    .map(stripReleaseTokenWrapper)
+    .map(sanitizeReleaseAssetId);
+
+  if (ids.length === 0) {
+    throw new Error("parse error");
+  }
+  if (ids.length > MAX_RELEASE_ASSET_IDS) {
+    throw new Error("parse error");
+  }
+  if (byteLength(JSON.stringify({ ids })) > MAX_RELEASE_ARGS_BYTES) {
+    throw new Error("parse error");
+  }
+
+  return {
+    op: "release_assets",
+    args: { ids },
+  };
+}
+
+function stripReleaseTokenWrapper(token: string): string {
+  const value = token.trim();
+  if (
+    (value.startsWith("[") && value.endsWith("]")) ||
+    (value.startsWith("(") && value.endsWith(")")) ||
+    (value.startsWith("{") && value.endsWith("}"))
+  ) {
+    return value.slice(1, -1).trim();
+  }
+  return value;
+}
+
+function sanitizeReleaseAssetId(rawId: string): string {
+  const value = rawId.trim();
+  if (value.length === 0) {
+    throw new Error("parse error");
+  }
+  if (value.includes("\0")) {
+    throw new Error("parse error");
+  }
+  if (value.includes("..")) {
+    throw new Error("parse error");
+  }
+  if (value.includes("\\")) {
+    throw new Error("parse error");
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9+\-.]*:/.test(value)) {
+    throw new Error("parse error");
+  }
+  if (value.startsWith("//")) {
+    throw new Error("parse error");
+  }
+
+  const normalized = value.startsWith("/assets/")
+    ? value.slice("/assets/".length)
+    : value.startsWith("assets/")
+    ? value.slice("assets/".length)
+    : value.startsWith("/")
+    ? value.slice(1)
+    : value;
+
+  if (normalized.length === 0) {
+    throw new Error("parse error");
+  }
+  if (!/^[A-Za-z0-9._\-\/]+$/.test(normalized)) {
+    throw new Error("parse error");
+  }
+  return normalized;
+}
+
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
 }
 
 function parseInlineArgs(input: string): Record<string, string> {

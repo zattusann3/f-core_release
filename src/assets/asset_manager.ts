@@ -91,7 +91,7 @@ export class AssetManager {
     this.maxPoints = options.maxPoints ?? DEFAULT_MAX_POINTS;
     this.maxConcurrentFetches = options.maxConcurrentFetches ?? DEFAULT_MAX_CONCURRENT_FETCHES;
     this.pointsByKind = { ...DEFAULT_POINTS_BY_KIND, ...(options.pointsByKind ?? {}) };
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = resolveFetchImpl(options.fetchImpl);
     this.transform = options.transform ?? passthroughTransform;
   }
 
@@ -387,6 +387,15 @@ export class AssetManager {
   }
 }
 
+function resolveFetchImpl(fetchImpl?: typeof fetch): typeof fetch {
+  const candidate = fetchImpl ?? globalThis.fetch;
+  if (typeof candidate !== "function") {
+    throw new Error("fetch is not available");
+  }
+  return ((input: RequestInfo | URL, init?: RequestInit) =>
+    candidate.call(globalThis, input, init)) as typeof fetch;
+}
+
 function passthroughTransform(
   data: Uint8Array,
   _context: AssetTransformContext,
@@ -504,5 +513,17 @@ export function parseReleaseDirective(text: string): string[] {
   }
   const tokens = rest.split(/\s+/g).flatMap((token) => token.split(",")).map((token) => token.trim())
     .filter((token) => token.length > 0);
-  return tokens.map((token) => sanitizeAssetId(token));
+  return tokens.map((token) => sanitizeAssetId(stripTokenWrapper(token)));
+}
+
+function stripTokenWrapper(token: string): string {
+  const value = token.trim();
+  if (
+    (value.startsWith("[") && value.endsWith("]")) ||
+    (value.startsWith("(") && value.endsWith(")")) ||
+    (value.startsWith("{") && value.endsWith("}"))
+  ) {
+    return value.slice(1, -1).trim();
+  }
+  return value;
 }

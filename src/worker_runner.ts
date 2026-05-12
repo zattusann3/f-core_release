@@ -1,4 +1,5 @@
-import { createPluginContext, type FlowControl, type RuntimeState } from "./context.ts";
+import { createPluginContext } from "./context.ts";
+import type { FlowControl, RuntimeState } from "./context.ts";
 import { sha256Hex } from "./manifest_crypto.ts";
 import { PLUGIN_MANIFEST } from "./plugin_manifest.ts";
 import {

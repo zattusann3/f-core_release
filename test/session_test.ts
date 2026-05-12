@@ -235,3 +235,60 @@ Deno.test("ScenarioSession: step rejects before scenario start", async () => {
     session.close();
   }
 });
+
+Deno.test("ScenarioSession: executes release_assets in evaluator layer", async () => {
+  const released: string[][] = [];
+  const scenario: Record<string, CommandIR[]> = {
+    start: [
+      { op: "release_assets", args: { ids: ["bg/intro.jpg", "se/click.ogg"] } },
+      { op: "say", args: { text: "next" } },
+    ],
+  };
+
+  const session = new ScenarioSession(
+    undefined,
+    undefined,
+    {
+      onReleaseAssets: (ids) => {
+        released.push([...ids]);
+      },
+    },
+  );
+
+  try {
+    await session.loadScenario(scenario, "start");
+
+    const first = await session.step();
+    assertEquals(first, []);
+    assertEquals(released, [["bg/intro.jpg", "se/click.ogg"]]);
+    assertEquals(session.currentLabel, "start");
+    assertEquals(session.currentIndex, 1);
+
+    const second = await session.step();
+    assertEquals(second?.length, 1);
+    assertEquals(session.currentIndex, 2);
+  } finally {
+    session.close();
+  }
+});
+
+Deno.test("ScenarioSession: rejects oversized release_assets payload", async () => {
+  const ids = Array.from({ length: 33 }, (_, index) => `bg/${index}.png`);
+  const scenario: Record<string, CommandIR[]> = {
+    start: [
+      { op: "release_assets", args: { ids } },
+    ],
+  };
+
+  const session = new ScenarioSession();
+  try {
+    await session.loadScenario(scenario, "start");
+    await assertRejects(
+      () => session.step(),
+      Error,
+      "invalid scenario",
+    );
+  } finally {
+    session.close();
+  }
+});

@@ -26,6 +26,8 @@ window.addEventListener("contextmenu", (event) => {
   window.parent.postMessage({ type: "fcore.toggleSystemMenu" }, "*");
 }, { capture: true });
 
+window.parent.postMessage({ type: "RendererReady" }, "*");
+
 function isRenderMessage(
   value: unknown,
 ): value is { type: "fcore.renderCommands"; renderCommands: unknown[] } {

@@ -24,4 +24,12 @@ export default defineConfig({
       },
     },
   },
+  worker: {
+    format: "iife",
+    rollupOptions: {
+      output: {
+        inlineDynamicImports: true,
+      },
+    },
+  },
 });
