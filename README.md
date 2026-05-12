@@ -126,8 +126,8 @@ deno task test
 ### Run Demo Host / デモホスト起動
 
 ```bash
-mkdir -p assets
-# 任意の画像を assets/sample.jpg として配置
+mkdir -p public/assets
+# 任意の画像を public/assets/sample.jpg として配置
 deno task demo:serve
 ```
 
@@ -148,6 +148,9 @@ npm run tauri:dev
 
 - EN: For browser-only debug without Rust shell, run `npm run dev`.
 - JA: Rustシェルなしでフロントだけ確認する場合は `npm run dev` を使います。
+
+- EN: In production build, Inspector is hidden and renderer view takes the full window.
+- JA: 本番ビルドでは Inspector は非表示になり、Renderer 画面がウィンドウ全体を占有します。
 
 ### Manifest Automation / マニフェスト自動化
 
@@ -221,8 +224,14 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
 - EN: Division by zero in `^/` is explicitly rejected.
 - JA: `^/` のゼロ除算は明示的に拒否します。
 
-- EN: Worker execution is timeout-guarded (default `1000ms`) and terminated on overrun.
-- JA: Worker実行はタイムアウト（デフォルト `1000ms`）で監視され、超過時は強制終了されます。
+- EN: Worker execution is timeout-guarded (default `2000ms`) and terminated on overrun.
+- JA: Worker実行はタイムアウト（デフォルト `2000ms`）で監視され、超過時は強制終了されます。
+
+- EN: Scenario directive `@release ...` is parsed before runtime plugin execution and handled in
+  session evaluator layer with strict limits.
+- JA:
+  シナリオディレクティブ `@release ...` はプラグイン実行前にパースされ、厳格な上限制限付きで
+  セッション評価層により処理されます。
 
 - EN: Input/output payload sizes are constrained to prevent memory-pressure DoS.
 - JA: メモリ圧迫型DoS対策として、入出力ペイロードサイズを制限しています。

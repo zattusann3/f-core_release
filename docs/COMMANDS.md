@@ -39,7 +39,7 @@ This document summarizes commands currently available in this runtime.
 
 | Command  | Required Args                                      | Behavior (EN)                                                               | 機能 (JA)                                                                             |
 | -------- | -------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `say`    | `text: string`                                     | Stores text into `last_say` and requests `next`.                           | テキストを `last_say` に保存し、`next` を要求します。                                |
+| `say`    | `text: string`                                     | Stores text into `last_say`; appends text node when non-blank; requests `next`. | テキストを `last_say` に保存し、非空白ならテキストノードを描画して `next` を要求します。 |
 | `choice` | `to: string`                                       | Requests `jump(to)`.                                                        | `jump(to)` を要求します。                                                             |
 | `set`    | `target: string`, `expression: string`             | Evaluates safe expression and writes result to `target`, then requests `next`. | 安全式を評価して `target` に代入し、`next` を要求します。                         |
 | `asset`  | `type: "bg" \| "fg"`, `src: string`                | Clears target layer and appends an `img` render node.                      | 対象レイヤーをクリアして `img` ノードを描画します。                                   |
@@ -57,6 +57,22 @@ This document summarizes commands currently available in this runtime.
   - `UpdateCSSVar { targetId, vars }`
   - `ClearSubtree { targetId }`
 
+## Scenario Directive (`@release`) / シナリオディレクティブ（`@release`）
+
+- EN: `@release` is parsed in parser/session layer and does not execute as a worker plugin.
+- JA: `@release` は parser/session 層で処理され、Worker プラグインとしては実行されません。
+
+- EN: Syntax example: `@release bg.jpg fg.png`.
+- JA: 構文例: `@release bg.jpg fg.png`。
+
+- EN: Limits: max `32` ids and max `4096` bytes for serialized args.
+- JA: 制限: ID は最大 `32` 件、シリアライズ後引数サイズは最大 `4096` バイトです。
+
+- EN: IDs are validated with strict asset-id rules (reject `..`, `\\`, schemes like `http:`,
+  `//`, control chars, and invalid characters) at parse time.
+- JA:
+  ID は厳格なアセットID検証（`..`、`\\`、`http:` のようなスキーム、`//`、制御文字、不正文字）により
+  パース時に拒否されます。
 ## `set` Expression Rules / `set` の式ルール
 
 - EN: Format must be exactly `<left> <operator> <right>` (3 tokens).
@@ -112,6 +128,9 @@ This document summarizes commands currently available in this runtime.
 
 - EN: Payload size limits are enforced for request/response objects.
 - JA: リクエスト/レスポンスのペイロードサイズ制限が適用されます。
+
+- EN: Worker execution timeout default is `2000ms`.
+- JA: Worker 実行タイムアウトのデフォルト値は `2000ms` です。
 
 ## Host Startup Commands / ホスト起動コマンド
 

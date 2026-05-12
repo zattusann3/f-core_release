@@ -21,6 +21,13 @@ cd /Users/ishikawasakuraichirou/f-core20260403
 | `npm run tauri:dev`    | Start the Tauri desktop app in development mode. This also runs the Vite dev server via Tauri config. | Tauri デスクトップアプリを開発モードで起動します。Tauri 設定により Vite 開発サーバーも起動します。 |
 | `deno task demo:serve` | Start the Deno demo host with network/read permissions and Worker support.                            | Deno デモホストをネットワーク・読み取り権限と Worker 対応で起動します。                            |
 
+## Demo Assets / デモ用アセット配置
+
+| Command                                 | EN                                                                                               | JA                                                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `mkdir -p public/assets`                | Create the demo asset directory used by both Vite/Tauri and `demo:serve`.                       | Vite/Tauri と `demo:serve` の両方で使うデモアセット配置先を作成します。                              |
+| `cp <your-image>.jpg public/assets/sample.jpg` | Place a sample image referenced by the built-in demo scenario.                                   | 内蔵デモシナリオが参照するサンプル画像を配置します。                                                   |
+
 ## Tests and Checks / テスト・検証
 
 | Command                                | EN                                                                                 | JA                                                                                       |
@@ -87,6 +94,9 @@ npm run tauri:dev
 
 - EN: Use this when behavior depends on Tauri APIs or native commands.
 - JA: Tauri API やネイティブコマンドに依存する挙動を確認するときに使います。
+
+- EN: In production build, Inspector is hidden and renderer view is fullscreen.
+- JA: 本番ビルドでは Inspector は非表示となり、Renderer 画面がフルスクリーン表示されます。
 
 ### Main pre-commit check / コミット前の基本確認
 
