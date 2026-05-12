@@ -253,27 +253,10 @@ FCORE_MANIFEST_PRIVATE_KEY_PKCS8_BASE64=... deno task manifest:update
 - EN: External-facing errors are sanitized.
 - JA: 外部向けエラーはサニタイズします。
 
-## ADR / 設計記録
-
-- EN: Security design decision is documented in ADR.
-- JA: セキュリティ設計判断はADRに記録しています。
-
-- [`adr/ADR-F-CORE20260403-CORE-20260413-01-secure-plugin-runtime-boundary.md`](./adr/ADR-F-CORE20260403-CORE-20260413-01-secure-plugin-runtime-boundary.md)
-- [`adr/ADR-F-CORE20260403-CORE-20260427-02-fail-fast-explicit-error-model.md`](./adr/ADR-F-CORE20260403-CORE-20260427-02-fail-fast-explicit-error-model.md)
-- [`adr/ADR-F-CORE20260403-CORE-20260503-03-tauri-first-production-with-web-fallback.md`](./adr/ADR-F-CORE20260403-CORE-20260503-03-tauri-first-production-with-web-fallback.md)
-
 ## Known Concerns / 既知の懸念
 
 - EN: Current concerns and risk candidates are tracked in [`docs/CONCERNS.md`](./docs/CONCERNS.md).
 - JA: 現段階の懸念点とリスク候補は [`docs/CONCERNS.md`](./docs/CONCERNS.md) に整理しています。
-
-## Release Operations / 公開運用
-
-- EN: Public release scope and force-push boundaries are documented in [`docs/PUBLISH_SCOPE.md`](./docs/PUBLISH_SCOPE.md).
-- JA: 公開スコープと強制プッシュ境界は [`docs/PUBLISH_SCOPE.md`](./docs/PUBLISH_SCOPE.md) に記載しています。
-
-- EN: Use the pre-release gate checklist at [`docs/PRE_RELEASE_CHECKLIST.md`](./docs/PRE_RELEASE_CHECKLIST.md).
-- JA: 公開直前のゲートチェックには [`docs/PRE_RELEASE_CHECKLIST.md`](./docs/PRE_RELEASE_CHECKLIST.md) を使用してください。
 
 ## License / ライセンス
 
