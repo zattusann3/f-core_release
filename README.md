@@ -67,6 +67,11 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
   公式サポート対象は Tauri によるローカルアプリケーションビルドです。ブラウザ/HTML
   ビルドは開発プレビューおよび互換性検証用として提供し、同等のサポートおよびセキュリティ保証の対象外です。
 
+- EN: Current runtime verification is centered on macOS. Windows behavior is not yet fully
+  validated and will be addressed in a later phase.
+- JA:
+  現時点の実行検証は macOS 中心です。Windows 向けの挙動はまだ十分に検証できておらず、後続フェーズで対応します。
+
 - EN: f-core is a local-first scenario runtime.
   Official core/host does not provide network communication, account systems, payments, online
   rankings, chat, or external API credential management.

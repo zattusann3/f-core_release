@@ -8,10 +8,16 @@
 - EN: Browser/HTML mode is provided for development preview and compatibility checks, not as an official production deployment target.
 - JA: ブラウザ/HTML モードは開発プレビューおよび互換性確認用途であり、公式な本番配備対象ではありません。
 
+- EN: Current security/runtime verification is centered on macOS. Windows validation is planned but not complete yet.
+- JA: 現時点のセキュリティ/ランタイム検証は macOS 中心です。Windows 検証は予定していますが、まだ完了していません。
+
 ## Reporting a Vulnerability / 脆弱性報告
 
-- EN: Please report security issues privately to the maintainer. Do not open a public issue first.
-- JA: セキュリティ問題は、まずメンテナへ非公開で報告してください。最初から公開 Issue は作成しないでください。
+- EN: Contact channels: X (DM to the maintainer) or GitHub Issues in this repository.
+- JA: 連絡窓口: メンテナの X（DM）@ouichiro39562または本リポジトリの GitHub Issue。
+
+- EN: If you use a public Issue, avoid posting exploit details or sensitive data in full.
+- JA: 公開 Issue を使う場合、悪用手順や機微情報の詳細はそのまま公開しないでください。
 
 - EN: Include reproduction steps, affected files/components, and expected impact if possible.
 - JA: 可能であれば、再現手順・影響箇所（ファイル/コンポーネント）・想定インパクトを添えてください。
@@ -45,4 +51,3 @@
 
 - EN: Input and payload sizes are bounded to reduce memory-pressure and abuse risks.
 - JA: 入力およびペイロードサイズは、メモリ圧迫や悪用リスク低減のために制限されています。
-
