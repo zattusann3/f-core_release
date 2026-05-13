@@ -109,6 +109,11 @@ Deno/TypeScriptで動く、コマンドプラグイン向け最小セキュア�
 - JA:
   外部通信、ランキング、チャット、特殊なOS連携などの高リスク機能は、公式コアに含めません。必要な場合は、開発者が各自の責任でサードパーティアダプタとして実装してください。
 
+- EN: Official distribution does not provide package/build encryption for shipped assets or scripts.
+  If encryption/obfuscation is required, implement and operate it in your own delivery pipeline.
+- JA:
+  公式配布では、同梱アセットやスクリプトに対するパッケージ/ビルド暗号化は提供しません。暗号化・難読化が必要な場合は、各開発者が自身の配布パイプラインで実装・運用してください。
+
 - EN: This project is maintained by an individual. Support is best-effort, with no SLA.
 - JA:
   本プロジェクトは個人運営です。サポートはベストエフォートであり、SLAは提供しません。
